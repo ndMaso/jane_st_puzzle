@@ -1,0 +1,1 @@
+compiling on windows : "gcc gds2nets.c gds_utils.c -o a.out -lws2_32"
