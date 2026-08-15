@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 typedef struct {
-  uint32_t x;
-  uint32_t y;
+  int32_t x;
+  int32_t y;
 } XY_t;
 
 // Rect, for printing to JSON
@@ -24,13 +24,31 @@ typedef struct {
   int32_t x2;
   int32_t y1;
   int32_t y2;
-} pin_t;
+} box_t;
 
 typedef struct {
-  int32_t x[16];    //x and y coordinates, placed at the center of some pin
-  int32_t y[16];
-  int num_copies;   // how many instances of the label have been seen.
-                    // assume no more than 16.
+  box_t pin;
+  char pinname[64];
+} pin_t;
+
+typedef pin_t contact_t;
+
+typedef struct {
+  XY_t coords[128]; //coords as read from the file
+  box_t bound;      //bounding box for the polygon
+  int l_rb;         //is the interior of the poly on the left or right
+  int num_points;   //number of populated coords
+} poly_t;
+
+typedef struct {
+  poly_t polys [128]; //individual shapes
+  int num_polys;      //number of populated shapes
+} polylist_t;
+
+
+typedef struct {
+  poly_t LI_poly;   //the polygon by which contacts may attach to the pin
+  XY_t xy;        //x and y coordinates of the first instance of this label
   char pinname[64]; //unique pin name in the pcell
 } pin_lbl_t;
 
@@ -41,7 +59,7 @@ typedef struct {
   int        n_pins;         //how many of the pins array are allocated
   int        n_lbls;         //how many unique labels are allocated.
   char       strname[64];    //structure name
-  pin_t*     pins[64];       //room for 64 pin objects
+  pin_t*     pins[64];       //room for 64 pin objects.
   pin_lbl_t* pin_lbls[64];   //list of unique pin labels in the structure.
 } sref_t;
 
@@ -131,9 +149,18 @@ enum DType {
 //targets a json or whatever format so python and parse it simply.
 static inline void write_box(FILE* fd, rect_t* box, char* pin);
 
+//UNIMPLEMNTED
 //breaks a path object down into boxes and writes them to the output file
 void store_path(FILE* fd, XY_t path[]);
 
+//sets poly->lr;
+//sets poly->bound as a bounding box with margin
+int config_poly(poly_t* poly, int margin);
+
+int poly_intersect(poly_t* poly, XY_t xy);
+
+
+//UNIMPLEMNTED
 //call to read a structure definition into memory;
 // FILE*   fd : file descriptor with cursor alligned to first record of a structure
 // sref_t** s : Pointer to the next empty element of structure list
@@ -149,7 +176,21 @@ void process_pin_name(char* name, sref_t* s, int32_t X, int32_t Y);
 void copy_sref(char* ref, FILE* out_file, int x, int y);
 
 //processes gds file until seeing the top level structure name, building pin lists of the pcells
-int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, char* top_strnames);
+int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, polylist_t* polylist, char* top_strnames);
+
+//given a gds file pointing at the top level struct, builds a list of licon contacts and returns the cursor
+//when done. Sorts the list by increasing y coordinate.
+//FILE* in_file : the gds stream
+//sref_t* via_ref : structure element corresponding to the LICON via.
+//return - buf : large buffer with room for all via contacts drawn by the top structure.
+contact_t* build_contact_list(FILE* in_file, sref_t* via_ref);
 
 //instantiates pcells and draws routing rectangles as specified in the top level str name
 void print_structure(FILE*in_file, FILE* out_file, structure_list_t* slist);
+
+//Creates an association between pin shapes, pin labels, and the LI shape of the pin.
+//s : one structure, filled with pins unassigned to pin_lbls.
+//p : list of LI shapes in the structure
+int assign_pins(sref_t* s, polylist_t* pl);
+
+int inside_poly(XY_t xy, poly_t* p);

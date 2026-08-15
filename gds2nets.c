@@ -10,7 +10,7 @@
 //
 
 //TODO
-//remove buffer and just use fprintf
+//Associate what pins you can with a label when read end of structure.
 //fill out the two level case tree, mostly should be setting state and calling function
 // which consume relevant data sections and write rectangles to file.
 
@@ -22,9 +22,12 @@
 #include "gds_utils.h"
 
 //Special layer and datatypes that we care about.
-int LI_LAYER_C = 67;
-int LI_PIN_DTYPE = 16;
-int LI_TEXT_DTYPE = 5;
+
+#define LI_LAYER_C 67
+#define LI_PIN_DTYPE 16
+#define LI_TEXT_DTYPE 5
+#define LI_DRAW_DTYPE 20
+#define BOUND_MARGIN 86 //licon half width + 1
 
 int main(int argc, char* argv[]) {
 // Parsing
@@ -50,12 +53,16 @@ int main(int argc, char* argv[]) {
 //-------------------------------------------------------------------
 // Memory Allocation
 
+  //holds relevant info for later srefs and outfile write operations
   structure_list_t* slist = malloc(sizeof(structure_list_t));
   slist->num_structs = 0;
+  //temp buffer of all the li shapes in a sref.
+  polylist_t* polylist = malloc(sizeof(polylist_t));
+  polylist->num_polys = 0;
 
 //-------------------------------------------------------------------
 // Main loop
-  int ret = build_structures(fd, out_file, slist, argv[3]);
+  int ret = build_structures(fd, out_file, slist, polylist, argv[3]);
   if (ret == 0) {
     //next stage
     printf("Got through to top struct.\n");
@@ -72,9 +79,17 @@ int main(int argc, char* argv[]) {
 
 
   for (int i = 0; i < slist->num_structs; i++) {
+    for (int j = 0; j < slist->structures[i]->n_lbls; j++) {
+      free(slist->structures[i]->pin_lbls[j]);
+    }
+    for (int j = 0; j < slist->structures[i]->n_pins; j++) {
+      free(slist->structures[i]->pins[j]);
+    }
     free(slist->structures[i]);
   }
   free(slist);
+
+  free(polylist);
 
   fclose(fd);
   fclose(out_file);
@@ -83,16 +98,19 @@ int main(int argc, char* argv[]) {
 }
 
 
-int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, char* top_strname) {
+int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, polylist_t* polylist, char* top_strname) {
   //string for error messages. Max 512 characters + terminator
   char* str_buf = malloc(513*sizeof(char));
   char* struct_name = malloc(64*sizeof(char));
+  int32_t boundary_coords[128];
 
   enum State stream_state = STREAM_S;
   uint16_t record_len;
   uint8_t record_type = HEADER;
   uint8_t last_record = START;
-  uint8_t data_type;
+  uint8_t data_type; //data type of the record
+  uint16_t layernum; //layernum of the element
+  uint16_t dtype;    //data type of the element
   //space to hold a coordinate for later
   int32_t XY_coords[2];
   //this element is a pin or text object, don't skip.
@@ -221,8 +239,11 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, cha
           case(STRNAME):
           case(ENDEL):
             if (record_type == ENDSTR) { last_record = ENDSTR;
+              //associate all pin shapes with a pin label.
+              assign_pins(slist->structures[slist->num_structs - 1], polylist);
               //exit structure;
               stream_state = STREAM_S;
+              polylist->num_polys = 0;
             }
             else if (record_type == BOUNDARY) { last_record = BOUNDARY;
               stream_state = BOUNDARY_S;
@@ -266,7 +287,7 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, cha
             if (record_type == LAYER) {last_record = LAYER;
               //if LAYER is not li it's not a pin so we don't care
 
-              uint16_t layernum;
+
               fread(&layernum, sizeof(uint16_t), 1, in_file);
               layernum = ntohs(layernum);
               writing = (layernum == LI_LAYER_C) ? 1 : 0;
@@ -279,10 +300,11 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, cha
             break; //case(PATH)
           case(LAYER):
             if (record_type == DATATYPE) { last_record = DATATYPE;
-              uint16_t dtype;
+
               fread(&dtype, sizeof(uint16_t), 1, in_file);
               dtype = ntohs(dtype);
-              writing = (dtype == LI_PIN_DTYPE) ? writing : 0;
+              //if its a pin box or a li.
+              writing = (dtype == LI_PIN_DTYPE || dtype == LI_DRAW_DTYPE) ? writing : 0;
             } else {
               sprintf(str_buf, "Record error: state = BOUNDARY:LAYER, got = %d expect DATATYPE\n", (char) record_type);
               perror(str_buf);
@@ -292,28 +314,40 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, cha
 
           case(DATATYPE):
             if (record_type == XY) {last_record = XY;
-              if (writing == 0) break; //no further action needed.
-              //Process the bounary, which is a box object.
-              //check that length is 40 + 4 = 5 points* 2 coords* 2 bytes + 4 bytes header
-              if (record_len != 44) {
-                sprintf(str_buf, "Record length of boundary XY is not 44: len = %d\n", record_len);
-                perror(str_buf);
-                return 1;
-              }
-              //add a pin
-              int this_n_pins = slist->structures[slist->num_structs - 1]->n_pins;
-              slist->structures[slist->num_structs - 1]->pins[this_n_pins] = malloc(sizeof(pin_t));
+              if (layernum != LI_LAYER_C) break; //only interested in this layer
+              switch(dtype) {
+                case(LI_PIN_DTYPE):
+                  //Process the bounary, which is a box object.
+                  //add a pin
+                  int this_n_pins = slist->structures[slist->num_structs - 1]->n_pins;
+                  slist->structures[slist->num_structs - 1]->pins[this_n_pins] = malloc(sizeof(pin_t));
 
-              //grab all the coordinates, technically only using 6.
-              int32_t box_coords[10];
-              fread(box_coords, sizeof(int32_t), 10, in_file);
-              for (int c = 0; c < 10; c++) {box_coords[c] = ntohl(box_coords[c]);}
-              int32_t x1 = min(min(box_coords[0], box_coords[2]), box_coords[4]);
-              int32_t x2 = max(max(box_coords[0], box_coords[2]), box_coords[4]);
-              int32_t y1 = min(min(box_coords[1], box_coords[3]), box_coords[5]);
-              int32_t y2 = max(max(box_coords[1], box_coords[3]), box_coords[5]);
-              //populate the pin coordinates.
-              *(slist->structures[slist->num_structs - 1]->pins[this_n_pins]) = (pin_t){x1,x2,y1,y2};
+                  //grab all the coordinates, technically only using 6.
+                  fread(boundary_coords, sizeof(int32_t), 10, in_file);
+                  for (int c = 0; c < 10; c++) {boundary_coords[c] = ntohl(boundary_coords[c]);}
+                  int32_t x1 = min(min(boundary_coords[0], boundary_coords[2]), boundary_coords[4]);
+                  int32_t x2 = max(max(boundary_coords[0], boundary_coords[2]), boundary_coords[4]);
+                  int32_t y1 = min(min(boundary_coords[1], boundary_coords[3]), boundary_coords[5]);
+                  int32_t y2 = max(max(boundary_coords[1], boundary_coords[3]), boundary_coords[5]);
+                  //populate the pin coordinates.
+                  *(slist->structures[slist->num_structs - 1]->pins[this_n_pins]) = (pin_t){x1,x2,y1,y2};
+                  break; //case(LI_PIN_DTYPE);
+
+                case(LI_DRAW_DTYPE):
+                  //process the boundary, which is a li layer, there are record_len - 4 bytes of coords
+                  fread(boundary_coords, sizeof(int32_t), (record_len - 4)/sizeof(int32_t), in_file);
+                  for (int c = 0; c < (record_len-4)/sizeof(int32_t)/2; c++) {
+                    //hard copy the coords into the polylist for this structure.
+                    polylist->polys[polylist->num_polys].coords[c].x = ntohl(boundary_coords[2*c]);
+                    polylist->polys[polylist->num_polys].coords[c].y = ntohl(boundary_coords[(2*c)+1]);
+                  }
+                  polylist->polys[polylist->num_polys].num_points = (record_len-4)/sizeof(int32_t)/2;
+                  //assign winding and bound box.
+                  config_poly(&(polylist->polys[polylist->num_polys]), BOUND_MARGIN);
+                  polylist->num_polys++;
+                  break;//case(LI_DRAW_DTYPE)
+                default:
+              }//switch(dtype)
             }
             else {
               sprintf(str_buf, "Record error: state = BOUNDARY:DATATYPE, got = %d, expected XY\n", (char) record_type);
@@ -355,7 +389,6 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, cha
             break; //case(PATH)
           case(LAYER):
             if (record_type == DATATYPE) { last_record = DATATYPE;
-              uint16_t dtype;
               fread(&dtype, sizeof(uint16_t), 1, in_file);
               dtype = ntohs(dtype);
               //Assume no path pins
