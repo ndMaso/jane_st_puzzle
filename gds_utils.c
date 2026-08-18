@@ -1,9 +1,13 @@
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <winsock2.h>
-#include "gds_utils.h"
-
+#ifndef TOP
+#define TOP
+  #include <stdlib.h>
+  #include <string.h>
+  #include <stdio.h>
+  #include <stdint.h>
+  #include <math.h>
+  #include <winsock2.h>
+  #include "gds_utils.h"
+#endif
 
 //standardized format for adding boxes to a list
 //targets a json or whatever format so python and parse it simply.
@@ -185,27 +189,9 @@ int assign_pins(sref_t* s, polylist_t* pl) {
       }
     }
   }
-  //find all pins that whose center is in that poly
-  //if already assigned a label, skip this
-
   return 0;
 }
 
-//given a gds file pointing at the top level struct, builds a list of licon contacts and returns the cursor
-//when done. Sorts the list by increasing y coordinate.
-//FILE* in_file : the gds stream
-//sref_t* via_ref : structure element corresponding to the LICON via.
-//return - buf : large buffer with room for all via contacts drawn by the top structure.
-contact_t* build_contact_list(FILE* in_file, sref_t* via_ref) {
-  contact_t* buf = malloc(sizeof(contact_t) * 8192);
-  int num_contacts = 0;
-  //run the state machine to the end, but only look for sref elements matching the via_ref name
-
-  //put the required info into the buffer
-  //REMEMBER TO NULL THE PINNAME.
-
-  return buf;
-}
 
 //
 int inside_poly(XY_t xy, poly_t* p) {
@@ -223,7 +209,7 @@ int inside_poly(XY_t xy, poly_t* p) {
     XY_t this = p->coords[edge];
     if (h_vb == 1)
     {
-      //check if X coord is in horizontal extend
+      //check if X coord is in horizontal extent
       if (xy.x >= min(cur.x, this.x) && xy.x <= max(cur.x, this.x)) {
         //if you drive through the point, it's inside
         if (xy.y == this.y) return 1;
@@ -245,7 +231,7 @@ int inside_poly(XY_t xy, poly_t* p) {
       h_vb = 0; //prepare for vertical edge
     } else //h_vb == 0
     {
-      //check if Y coord is in vertical extend
+      //check if Y coord is in vertical extent
       if (xy.y >= min(cur.y, this.y) && xy.y <= max(cur.y, this.y)) {
         //if you drive through the point, it's inside.
         if (xy.x == this.x) return 1;
@@ -284,6 +270,138 @@ int inside_poly(XY_t xy, poly_t* p) {
         (span_left[2] > span_right[2]) && (span_left[3] > span_right[3])){
           return 1;
         }
+  }
+
+  return 0;
+}
+int translate_and_copy_contacts(XY_t shift, sref_t* sref, contact_t* out, int reflect, int rotate) {
+  int32_t x1;
+  int32_t x2;
+  int32_t y1;
+  int32_t y2;
+
+  x1   = sref->pins[0]->pin.x1;
+  x2   = sref->pins[0]->pin.x2;
+  y1   = sref->pins[0]->pin.y1 * ((reflect == 1) ? -1 : 1);
+  y2   = sref->pins[0]->pin.y2 * ((reflect == 1) ? -1 : 1);
+
+  switch(rotate){
+    case(0):
+      out->pin.x1 = x1 + shift.x;
+      out->pin.x2 = x2 + shift.x;
+      out->pin.y1 = y1 + shift.y;
+      out->pin.y2 = y2 + shift.y;
+      break;
+    case(1):
+      out->pin.x1 = -y1 + shift.x;
+      out->pin.x2 = -y2 + shift.x;
+      out->pin.y1 = x2 + shift.y;
+      out->pin.y2 = x1 + shift.y;
+      break;
+    case(2):
+      out->pin.x1 = -x2 + shift.x;
+      out->pin.x2 = -x1 + shift.x;
+      out->pin.y1 = -y2 + shift.y;
+      out->pin.y2 = -y1 + shift.y;
+      break;
+    default:
+      fprintf(stderr, "Invalid rotate value specified (accepted values {0,1,2}).\n");
+      return 1;
+  }
+
+  out->pinname[0] = '\0';
+  out->dtype    = sref->pins[0]->dtype;
+  out->layernum = sref->pins[0]->layernum;
+
+  return 0;
+}
+
+XY_t rot90(XY_t xy) {
+  XY_t o;
+  o.x = -xy.y;
+  o.y = xy.x;
+  return o;
+}
+
+XY_t rot180(XY_t xy) {
+  XY_t o;
+  o.x = -xy.x;
+  o.y = -xy.y;
+  return o;
+}
+
+int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, int reflect, int rotate) {
+  poly_t test;
+  char uid[16];
+  int TEST = 0;
+  //ignore vias and diodes
+  if (sref->n_lbls == 0)// || strcmp(sref->pin_lbls[0]->pinname, "DIODE")==0)
+    return 0;
+  //for each polygon instance, transform and check for intersection with each unlabelled contact
+  for (int shape = 0; shape < sref->n_lbls; shape++) {
+    memcpy(test.coords, sref->pin_lbls[shape]->LI_poly.coords,
+       sizeof(XY_t)*sref->pin_lbls[shape]->LI_poly.num_points);
+    test.l_rb = sref->pin_lbls[shape]->LI_poly.l_rb;
+    test.l_rb = (reflect != 0) ? (! test.l_rb) : test.l_rb;
+    test.num_points = sref->pin_lbls[shape]->LI_poly.num_points;
+    //don't care about test.bound
+    switch(rotate){
+      case(0):
+        for (int coord = 0; coord < test.num_points; coord++) {
+          if (reflect != 0) test.coords[coord].y = - test.coords[coord].y;
+        }
+        break;
+      case(1): //90 degrees
+        for (int coord = 0; coord < test.num_points; coord++) {
+          if (reflect != 0) test.coords[coord].y = - test.coords[coord].y;
+          test.coords[coord] = rot90(test.coords[coord]);
+        }
+        break;
+      case(2): //180 degrees
+        for (int coord = 0; coord < test.num_points; coord++) {
+          if (reflect != 0) test.coords[coord].y = - test.coords[coord].y;
+          test.coords[coord] = rot180(test.coords[coord]);
+        }
+        break;
+      default:
+        fprintf(stderr, "Error: invalid angle option \"%d\".", rotate);
+    }//switch(rotate)
+    for (int coord = 0; coord < test.num_points; coord++) {
+      test.coords[coord].x = test.coords[coord].x + shift.x;
+      test.coords[coord].y = test.coords[coord].y + shift.y;
+    }
+    if (strcmp(sref->strname, "sky130_fd_sc_hd__a31oi_2") == 0 && strcmp(sref->pin_lbls[shape]->pinname, "A2") == 0) {
+      printf("ref %d, rot %d, x %d, y %d\n", reflect, rotate, shift.x, shift.y);
+      for (int coord = 0; coord < test.num_points; coord++) {
+        printf("(%d, %d)->", test.coords[coord].x, test.coords[coord].y);
+       }
+       printf("\n");
+    }
+    //if (TEST == 0) {
+    //  TEST = 1;
+    //  for (int asdf = 0 ; asdf < test.num_points; asdf++) {
+    //    printf("(%d, %d)-> ", test.coords[asdf].x, test.coords[asdf].y);
+    //  }
+    //  printf("\n");
+   // }
+    //lazy sweep through whole contact list, not tooooo big
+    for (int contact = 0; contact < clist->num_contacts; contact++) {
+      //check for unlabelled contact
+      if (strcmp(clist->contacts[contact].pinname, "\0") == 0) {
+        //check all four corners of the contact for intersection
+        box_t box = clist->contacts[contact].pin;
+        if (inside_poly((XY_t) {box.x1, box.y1}, &test) ||
+          inside_poly((XY_t) {box.x1, box.y2}, &test) ||
+          inside_poly((XY_t) {box.x2, box.y1}, &test) ||
+          inside_poly((XY_t) {box.x2, box.y2}, &test)) {
+          //found the pin
+          snprintf(uid, 15, "_%d/", sref->next_uid);
+          strcat(clist->contacts[contact].pinname, sref->strname);
+          strcat(clist->contacts[contact].pinname, uid);
+          strcat(clist->contacts[contact].pinname, sref->pin_lbls[shape]->pinname);
+        }
+      }
+    }
   }
 
   return 0;

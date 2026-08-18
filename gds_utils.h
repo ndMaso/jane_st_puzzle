@@ -1,7 +1,15 @@
-#include <assert.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
+#ifndef TOP
+#define TOP
+  #include <stdlib.h>
+  #include <string.h>
+  #include <stdio.h>
+  #include <stdint.h>
+  #include <math.h>
+  #include <winsock2.h>
+  #include <winsock.h>
+  #include "gds_utils.h"
+#endif
+
 
 typedef struct {
   int32_t x;
@@ -27,8 +35,10 @@ typedef struct {
 } box_t;
 
 typedef struct {
-  box_t pin;
   char pinname[64];
+  box_t pin;
+  int dtype;
+  int layernum;
 } pin_t;
 
 typedef pin_t contact_t;
@@ -48,7 +58,7 @@ typedef struct {
 
 typedef struct {
   poly_t LI_poly;   //the polygon by which contacts may attach to the pin
-  XY_t xy;        //x and y coordinates of the first instance of this label
+  XY_t xy;          //x and y coordinates of the first instance of this label
   char pinname[64]; //unique pin name in the pcell
 } pin_lbl_t;
 
@@ -56,17 +66,23 @@ typedef struct {
 // Contains a structure name used to reference later when referenced
 // Contains a list of labelled pins.
 typedef struct {
-  int        n_pins;         //how many of the pins array are allocated
-  int        n_lbls;         //how many unique labels are allocated.
   char       strname[64];    //structure name
   pin_t*     pins[64];       //room for 64 pin objects.
   pin_lbl_t* pin_lbls[64];   //list of unique pin labels in the structure.
+  int        n_pins;         //how many of the pins array are allocated
+  int        n_lbls;         //how many unique labels are allocated.
+  int        next_uid;       //integer uid to attach to next pcell instance.
 } sref_t;
 
 typedef struct {
   sref_t* structures[512];
   int     num_structs;
 } structure_list_t;
+
+typedef struct {
+  contact_t* contacts;
+  int num_contacts;
+} contact_list_t;
 
 enum State {
   STREAM_S,
@@ -183,10 +199,13 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
 //FILE* in_file : the gds stream
 //sref_t* via_ref : structure element corresponding to the LICON via.
 //return - buf : large buffer with room for all via contacts drawn by the top structure.
-contact_t* build_contact_list(FILE* in_file, sref_t* via_ref);
+int build_contact_list(FILE* in_file, sref_t* via_ref, contact_list_t* buf);
 
-//instantiates pcells and draws routing rectangles as specified in the top level str name
-void print_structure(FILE*in_file, FILE* out_file, structure_list_t* slist);
+//scans file from top level structure, copying LI polys and checking if they intersect with contacts in the list
+int write_contacts(FILE* in_file, FILE* out_file, contact_list_t* buf, structure_list_t* slist);
+
+//final pass through file for metal/via routing layers.
+int print_routes(FILE*in_file, FILE* out_file, structure_list_t* slist);
 
 //Creates an association between pin shapes, pin labels, and the LI shape of the pin.
 //s : one structure, filled with pins unassigned to pin_lbls.
@@ -194,3 +213,15 @@ void print_structure(FILE*in_file, FILE* out_file, structure_list_t* slist);
 int assign_pins(sref_t* s, polylist_t* pl);
 
 int inside_poly(XY_t xy, poly_t* p);
+
+//takes record data in an sref, applies the transformation to the elements of
+//the referenced structure and prints box objects
+int translate_and_copy_contacts(XY_t shift, sref_t * sref, contact_t* out, int reflect, int rotate);
+
+//takes record data in an sref, applies the transformation to the elements of
+//the referenced structure and prints shape objects
+int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, int reflect, int rotate);
+
+XY_t rot90(XY_t xy);
+
+XY_t rot180(XY_t xy);
