@@ -202,10 +202,12 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
 int build_contact_list(FILE* in_file, sref_t* via_ref, contact_list_t* buf);
 
 //scans file from top level structure, copying LI polys and checking if they intersect with contacts in the list
-int write_contacts(FILE* in_file, FILE* out_file, contact_list_t* buf, structure_list_t* slist);
+int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* buf, structure_list_t* slist);
+
+int write_contacts(FILE* out_file, contact_list_t* buf);
 
 //final pass through file for metal/via routing layers.
-int print_routes(FILE*in_file, FILE* out_file, structure_list_t* slist);
+int write_routing(FILE*in_file, FILE* out_file, structure_list_t* slist);
 
 //Creates an association between pin shapes, pin labels, and the LI shape of the pin.
 //s : one structure, filled with pins unassigned to pin_lbls.

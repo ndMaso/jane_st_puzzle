@@ -33,9 +33,9 @@ int main(int argc, char* argv[]) {
   }
   //Initialize
 
-  FILE* fd = fopen(argv[1], "rb");
+  FILE* in_file = fopen(argv[1], "rb");
 
-  if (fd == NULL) {
+  if (in_file == NULL) {
     perror("Error opening input file\n");
     return 1;
   }
@@ -61,7 +61,7 @@ int main(int argc, char* argv[]) {
 
 //-------------------------------------------------------------------
 // Main loop
-  int error = build_structures(fd, out_file, slist, polylist, argv[3]);
+  int error = build_structures(in_file, out_file, slist, polylist, argv[3]);
   if (error == 0) {
     //next stage
     printf("Got through to top struct.\n");
@@ -92,13 +92,13 @@ int main(int argc, char* argv[]) {
 
   if(error == 0) {
     clist->contacts = malloc(sizeof(contact_t) * 8192);
-    error = build_contact_list(fd, slist->structures[via_struct], clist);
+    error = build_contact_list(in_file, slist->structures[via_struct], clist);
     if (error != 0)
       printf("Built contact list, size %d.\n", clist->num_contacts);
   }
 
   if(error == 0) {
-    error = write_contacts(fd, out_file, clist, slist);
+    error = label_contacts(in_file, out_file, clist, slist);
   }
   if(error == 0) {
     int no_label = 0;
@@ -111,9 +111,11 @@ int main(int argc, char* argv[]) {
         no_label++;
       }
     }
+
     if(no_label == 0)
       printf("All contacts labelled.\n");
     else {
+      error = 1;
       printf("%d unlabelled contacts.\n", no_label);
       for (int s = 0; s < slist->num_structs; s++) {
         if (strcmp(slist->structures[s]->strname, "sky130_fd_sc_hd__o21a_2") == 0) {
@@ -126,6 +128,14 @@ int main(int argc, char* argv[]) {
       }
     }
   }
+
+  if (error == 0) {
+    //print contact list.
+    write_contacts(out_file, clist);
+    write_routing(in_file, out_file, slist);
+  }
+  printf("JSON file write finished.\n");
+
 
   //free
   if(clist->contacts != NULL) free(clist->contacts);
@@ -143,7 +153,7 @@ int main(int argc, char* argv[]) {
 
   free(polylist);
 
-  fclose(fd);
+  fclose(in_file);
   fclose(out_file);
 
   return 0;

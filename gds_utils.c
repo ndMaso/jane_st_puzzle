@@ -406,3 +406,32 @@ int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, 
 
   return 0;
 }
+
+int write_contacts(FILE* out_file, contact_list_t* clist) {
+  char pinname_copy[128];
+  fprintf(out_file, "\n{ clist : [\n"); //open object, open array
+  for(int contact = 0; contact < clist->num_contacts; contact++) {
+    //properties to label
+    //  pin : true          // designated the net segment as a driver/load,
+                            // pin objects will not be trimmed from the final net object
+    //  driver : <boolean>  // true/false depending on pin name
+    //  pinname : <string>  // used to label nets/ build logic
+    //  loc    : <xy_t>     // design rules require complete overlap of contact by metal,
+                            // so just centre is enough to determine intersection.
+    int driver = 0;
+    strcpy(pinname_copy, clist->contacts[contact].pinname);
+    char *pinlbl = strtok(pinname_copy, "/");
+
+    pinlbl = strtok(NULL, "/");
+    if (strcmp(pinlbl,"Q") == 0 || strcmp(pinlbl,"Y") == 0 || strcmp(pinlbl,"X") == 0)  {
+      driver = 1;
+    }
+    XY_t centre = (XY_t) {clist->contacts[contact].pin.x1/2+clist->contacts[contact].pin.x2/2,
+                          clist->contacts[contact].pin.y1/2+clist->contacts[contact].pin.y2/2};
+    if(contact) fprintf(out_file, ",\n");
+    fprintf(out_file, "  {pin:true, driver:%d, pinname:%s, loc:[%d,%d]}", driver, clist->contacts[contact].pinname, centre.x, centre.y);
+
+  }
+  fprintf(out_file, "]}\n");
+  return 0;
+}

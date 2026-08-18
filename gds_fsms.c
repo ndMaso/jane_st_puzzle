@@ -16,6 +16,8 @@
 #define LI_DRAW_DTYPE 20
 #define LI_CONTACT_DTYPE 44
 #define BOUND_MARGIN 86 //licon half width + 1
+#define IO_LNUM 70      //There's boundary objects at the inputs/outputs
+#define IO_DTYPE 20
 
 
 int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, polylist_t* polylist, char* top_strname) {
@@ -804,7 +806,7 @@ int build_contact_list(FILE* in_file, sref_t* via_ref, contact_list_t* buf) {
   return 0;
 }
 
-int write_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structure_list_t* slist) {
+int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structure_list_t* slist) {
   char* strbuf = malloc(sizeof(char)*256);
   enum State stream_state = STRUCTURE_S;
   enum RType last_record = STRNAME;
@@ -1038,5 +1040,73 @@ int write_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
   //Check if the referenced struture has both pin labels and LI shapes
   fseek(in_file, start_cursor, SEEK_SET);
   free(strbuf);
+  return 0;
+}
+
+//ignores tap structures, decaps, boundaries EXCEPT io boxes
+int write_routing(FILE*in_file, FILE* out_file, structure_list_t* slist) {
+  char* strbuf = malloc(sizeof(char)*256);
+  enum State stream_state = STRUCTURE_S;
+  enum RType last_record = STRNAME;
+  uint16_t record_len;
+  uint8_t record_type;
+  uint8_t data_type;
+  int reflect = 0;
+  int rotate = 0;    //1,2,3 = 90,180,270 degrees
+
+  //save state of cursor so can move it back at EOF
+  uint64_t start_cursor = ftell(in_file);
+  int angle;
+  XY_t shift;
+do {
+    //process a new record
+    //all records start with length and record type
+    uint64_t cursor = ftell(in_file);
+    //printf("Cursor : %d\n", cursor);
+    size_t result = fread(&record_len, sizeof(uint16_t), 1, in_file);
+    record_len = ntohs(record_len);
+    if (result != 1) {
+      fprintf(stderr, "Error reading record length, last_record = %d, cursor = %lu\n", last_record, ftell(in_file));
+      return 1;
+    }
+
+    result = fread(&record_type, sizeof(uint8_t), 1, in_file);
+    if (result != 1) {
+      perror("Error reading record type\n");
+      return 1;
+    }
+
+    result = fread(&data_type, sizeof(uint8_t), 1, in_file);
+    if (result != 1) {
+      perror("Error reading data type\n");
+      return 1;
+    }
+
+    //last state machine
+    switch(stream_state) {
+      case(STREAM_S):
+
+        break;//case(STREAM_S)
+      case(STRUCTURE_S):
+
+        break;//case(STRUCTURE_S)
+      case(BOUNDARY_S): //perhaps some other structures
+
+        break;//case(BOUNDARY_S)
+      case(PATH_S): //routing tracks
+
+        break;//case(PATH_S)
+      case(SREF_S): //vias
+
+        break;//case(SREF_S)
+      default:
+    }//switch(stream_state)
+
+
+    //advance cursor to next record.
+    //when finished, leave the cursor alligned to the first element of the top_structure
+    fseek(in_file, cursor + sizeof(uint8_t) * record_len, SEEK_SET);
+  }
+  while(last_record != ENDLIB);
   return 0;
 }
