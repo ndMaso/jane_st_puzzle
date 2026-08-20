@@ -11,11 +11,19 @@
 
 
 #define LI_LAYER_C 67
+#define M1_LAYER_C 68
+#define M2_LAYER_C 69
+#define M3_LAYER_C 70
+#define M4_LAYER_C 71
+#define M5_LAYER_C 72
+
 #define LI_PIN_DTYPE 16
 #define LI_TEXT_DTYPE 5
 #define LI_DRAW_DTYPE 20
-#define LI_CONTACT_DTYPE 44
+#define CONTACT_DTYPE 44
+
 #define BOUND_MARGIN 86 //licon half width + 1
+
 #define IO_LNUM 70      //There's boundary objects at the inputs/outputs
 #define IO_DTYPE 20
 
@@ -36,8 +44,6 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
 
   //space to hold a coordinate for later
   int32_t XY_coords[2];
-  //this element is a pin or text object, don't skip.
-  int writing = 0;
   do {
     //process a new record
     //all records start with length and record type
@@ -208,26 +214,21 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
         switch (last_record) {
           case(BOUNDARY):
             if (record_type == LAYER) {last_record = LAYER;
-              //if LAYER is not li it's not a pin so we don't care
-
-
               fread(&layernum, sizeof(uint16_t), 1, in_file);
               layernum = ntohs(layernum);
-              writing = (layernum == LI_LAYER_C) ? 1 : 0;
 
             } else {
               sprintf(str_buf, "Record error: state = BOUNDARY:BOUNDARY, got = %d expect LAYER\n", (char) record_type);
               perror(str_buf);
               return 1;
             }
-            break; //case(PATH)
+            break; //case(BOUNDARY)
           case(LAYER):
             if (record_type == DATATYPE) { last_record = DATATYPE;
 
               fread(&dtype, sizeof(uint16_t), 1, in_file);
               dtype = ntohs(dtype);
               //if its a pin box or a li.
-              writing = (dtype == LI_PIN_DTYPE || dtype == LI_DRAW_DTYPE) ? writing : 0;
             } else {
               sprintf(str_buf, "Record error: state = BOUNDARY:LAYER, got = %d expect DATATYPE\n", (char) record_type);
               perror(str_buf);
@@ -239,8 +240,8 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
             if (record_type == XY) {last_record = XY;
               if (layernum != LI_LAYER_C) break; //only interested in this layer
               switch(dtype) {
-                case(LI_PIN_DTYPE):
-                case(LI_CONTACT_DTYPE):
+                case(LI_PIN_DTYPE): //pin objects DEPRECATED
+                case(CONTACT_DTYPE): //contact/vias
                   //Process the bounary, which is a box object.
                   //add a pin
                   int this_n_pins = slist->structures[slist->num_structs - 1]->n_pins;
@@ -302,13 +303,10 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
         switch (last_record) {
           case(PATH):
             if (record_type == LAYER) {last_record = LAYER;
-              //if LAYER is not li it's not a pin so we don't care
 
               uint16_t layernum;
               fread(&layernum, sizeof(uint16_t), 1, in_file);
               layernum = ntohs(layernum);
-
-              writing = (layernum == LI_LAYER_C) ? 1 : 0;
 
             } else {
               sprintf(str_buf, "Record error: state = PATH:PATH, got = %d expect LAYER\n", (char) record_type);
@@ -321,10 +319,10 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
               fread(&dtype, sizeof(uint16_t), 1, in_file);
               dtype = ntohs(dtype);
               //Assume no path pins
-if (dtype == LI_PIN_DTYPE && writing == 1) {
-  perror("Turns out there are pins which are PATH elements: FIXME\n");
-  return 1;
-}
+              if (dtype == LI_PIN_DTYPE && layernum == LI_LAYER_C) {
+                perror("Turns out there are pins which are PATH elements: FIXME\n");
+                return 1;
+              }
             } else {
               sprintf(str_buf, "Record error: state = PATH:LAYER, got = %d expect DATATYPE\n", (char) record_type);
               perror(str_buf);
@@ -384,7 +382,6 @@ if (dtype == LI_PIN_DTYPE && writing == 1) {
               uint16_t layernum;
               fread(&layernum, sizeof(uint16_t), 1, in_file);
               layernum = ntohs(layernum);
-              writing = (layernum == LI_LAYER_C) ? 1 : 0;
             } else {
               sprintf(str_buf, "Record error: state = BOUNDARY:BOUNDARY, got = %d expect LAYER\n", (char) record_type);
               perror(str_buf);
@@ -395,10 +392,8 @@ if (dtype == LI_PIN_DTYPE && writing == 1) {
           case(LAYER):
             if (record_type == TEXTTYPE) {last_record = TEXTTYPE;
               //Only care about pin labels which are on texttype 5
-              uint16_t texttype;
-              fread(&texttype, sizeof(uint16_t), 1, in_file);
-              texttype = ntohs(texttype);
-              writing = (texttype == LI_TEXT_DTYPE) ? writing : 0;
+              fread(&dtype, sizeof(uint16_t), 1, in_file);
+              dtype = ntohs(dtype);
             }
             else {
               sprintf(str_buf, "Record error: state = TEXT:LAYER, got = %d expect TEXTTYPE\n", (char) record_type);
@@ -413,7 +408,7 @@ if (dtype == LI_PIN_DTYPE && writing == 1) {
             else if (record_type == WIDTH)    {last_record = WIDTH;} //no action
             else if (record_type == STRANS)   {last_record = STRANS;}//no action required for text
             else if (record_type == XY)       {last_record = XY;
-              if (writing == 1) {
+              if (dtype == LI_TEXT_DTYPE && layernum == LI_LAYER_C) {
                 fread(XY_coords, sizeof(int32_t), 2, in_file);
                 XY_coords[0] = ntohl(XY_coords[0]);
                 XY_coords[1] = ntohl(XY_coords[1]);
@@ -431,7 +426,7 @@ if (dtype == LI_PIN_DTYPE && writing == 1) {
             else if (record_type == WIDTH)  {last_record = WIDTH;} //no action
             else if (record_type == STRANS) {last_record = STRANS;} //no action required for text
             else if (record_type == XY)     {last_record = XY;
-              if (writing == 1) {
+              if (dtype == LI_TEXT_DTYPE && layernum == LI_LAYER_C) {
                 fread(XY_coords, sizeof(int32_t), 2, in_file);
                 XY_coords[0] = ntohl(XY_coords[0]);
                 XY_coords[1] = ntohl(XY_coords[1]);
@@ -447,7 +442,7 @@ if (dtype == LI_PIN_DTYPE && writing == 1) {
             if (record_type == WIDTH)         {last_record = WIDTH;} //no action
             else if (record_type == STRANS)   {last_record = STRANS;}//no action required for text.
             else if (record_type == XY)       {last_record = XY;
-              if (writing == 1) {
+              if (dtype == LI_TEXT_DTYPE && layernum == LI_LAYER_C) {
                 fread(XY_coords, sizeof(int32_t), 2, in_file);
                 XY_coords[0] = ntohl(XY_coords[0]);
                 XY_coords[1] = ntohl(XY_coords[1]);
@@ -462,7 +457,7 @@ if (dtype == LI_PIN_DTYPE && writing == 1) {
           case(WIDTH):
             if (record_type == STRANS)   {last_record = STRANS;}//no action required for text.
             else if (record_type == XY)       {last_record = XY;
-              if (writing == 1) {
+              if (dtype == LI_TEXT_DTYPE && layernum == LI_LAYER_C) {
                 fread(XY_coords, sizeof(int32_t), 2, in_file);
                 XY_coords[0] = ntohl(XY_coords[0]);
                 XY_coords[1] = ntohl(XY_coords[1]);
@@ -478,7 +473,7 @@ if (dtype == LI_PIN_DTYPE && writing == 1) {
             if (record_type == MAG) {last_record = MAG;}
             else if (record_type == ANGLE) {last_record = ANGLE;}
             else if (record_type == XY) {last_record = XY;
-              if (writing == 1) {
+              if (dtype == LI_TEXT_DTYPE && layernum == LI_LAYER_C) {
                 fread(XY_coords, sizeof(int32_t), 2, in_file);
                 XY_coords[0] = ntohl(XY_coords[0]);
                 XY_coords[1] = ntohl(XY_coords[1]);
@@ -493,7 +488,7 @@ if (dtype == LI_PIN_DTYPE && writing == 1) {
           case(MAG):
             if (record_type == ANGLE) {last_record = ANGLE;}
             else if (record_type == XY) {last_record = XY;
-              if (writing == 1) {
+              if (dtype == LI_TEXT_DTYPE && layernum == LI_LAYER_C) {
                 fread(XY_coords, sizeof(int32_t), 2, in_file);
                 XY_coords[0] = ntohl(XY_coords[0]);
                 XY_coords[1] = ntohl(XY_coords[1]);
@@ -507,7 +502,7 @@ if (dtype == LI_PIN_DTYPE && writing == 1) {
 
           case(ANGLE):
             if (record_type == XY) {last_record = XY;
-              if (writing == 1) {
+              if (dtype == LI_TEXT_DTYPE && layernum == LI_LAYER_C) {
                 fread(XY_coords, sizeof(int32_t), 2, in_file);
                 XY_coords[0] = ntohl(XY_coords[0]);
                 XY_coords[1] = ntohl(XY_coords[1]);
@@ -522,7 +517,7 @@ if (dtype == LI_PIN_DTYPE && writing == 1) {
           case(XY):
             if (record_type == STRING) {last_record = STRING;
               //get the string
-              if (writing == 1) {
+              if (dtype == LI_TEXT_DTYPE && layernum == LI_LAYER_C) {
                 fread(str_buf, sizeof(char), record_len - 4, in_file);
                 //terminate
                 str_buf[record_len - 4] = '\0';
@@ -735,8 +730,7 @@ int build_contact_list(FILE* in_file, sref_t* via_ref, contact_list_t* buf) {
             if (record_type = ANGLE) {last_record = ANGLE;
               //Check if it's 180 flipped.
               uint8_t angle_rec;
-              fread(&angle_rec, sizeof(uint8_t), 1, in_file);
-              if(angle_rec & (uint8_t)(1<<7) != 0) printf("AHAHAHAH\n");
+              fseek(in_file, 1, SEEK_CUR);
               fread(&angle_rec, sizeof(uint8_t), 1, in_file);
               //check against rotations of 90, 180, and 270 degrees
               switch(angle_rec){
@@ -902,7 +896,7 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
                   }
                 }
                 if (found == 0) {
-                  fprintf(stderr, "Did not find referenced structure \"%d\".\n", strbuf);
+                  fprintf(stderr, "Did not find referenced structure \"%s\".\n", strbuf);
                   return 1;
                 }
               } else {
@@ -943,8 +937,7 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
             else if (record_type == ANGLE) {last_record = ANGLE;
               //Check if it's 180 flipped.
               uint8_t angle_rec;
-              fread(&angle_rec, sizeof(uint8_t), 1, in_file);
-              if(angle_rec & (uint8_t)(1<<7) != 0) printf("AHAHAHAH\n");
+              fseek(in_file, 1, SEEK_CUR);
               fread(&angle_rec, sizeof(uint8_t), 1, in_file);
               //check against rotations of 90, 180, and 270 degrees
               switch(angle_rec){
@@ -976,8 +969,7 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
             if (record_type = ANGLE) {last_record = ANGLE;
               //Check if it's 180 flipped.
               uint8_t angle_rec;
-              fread(&angle_rec, sizeof(uint8_t), 1, in_file);
-              if(angle_rec & (uint8_t)(1<<7) != 0) printf("AHAHAHAH\n");
+              fseek(in_file, 1, SEEK_CUR);
               fread(&angle_rec, sizeof(uint8_t), 1, in_file);
               //check against rotations of 90, 180, and 270 degrees
               switch(angle_rec){
@@ -1046,11 +1038,22 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
 //ignores tap structures, decaps, boundaries EXCEPT io boxes
 int write_routing(FILE*in_file, FILE* out_file, structure_list_t* slist) {
   char* strbuf = malloc(sizeof(char)*256);
+  //collection of strings with locations
+  pin_lbl_t* iobuf = malloc(sizeof(pin_lbl_t) * 16);
+  int num_ios = 0;
   enum State stream_state = STRUCTURE_S;
   enum RType last_record = STRNAME;
   uint16_t record_len;
   uint8_t record_type;
   uint8_t data_type;
+
+  uint16_t layernum;
+  uint16_t dtype;
+
+  uint16_t pathtype = 0;
+  int32_t width = 0;
+  int32_t bx = 0;
+  int32_t ex = 0;
   int reflect = 0;
   int rotate = 0;    //1,2,3 = 90,180,270 degrees
 
@@ -1058,6 +1061,10 @@ int write_routing(FILE*in_file, FILE* out_file, structure_list_t* slist) {
   uint64_t start_cursor = ftell(in_file);
   int angle;
   XY_t shift;
+
+  sref_t* pcell;
+
+  fprintf(out_file, "\"shapes\":[\n");
 do {
     //process a new record
     //all records start with length and record type
@@ -1085,20 +1092,513 @@ do {
     //last state machine
     switch(stream_state) {
       case(STREAM_S):
-
+        switch(last_record) {
+          case(ENDSTR):
+            if(record_type == ENDLIB) {last_record = ENDLIB;}
+            else {
+              sprintf(strbuf, "Record error: state = STREAM_S:ENDSTR, got = %d expect ENDLIB\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;
+            default:
+        }
         break;//case(STREAM_S)
-      case(STRUCTURE_S):
 
-        break;//case(STRUCTURE_S)
+      case(STRUCTURE_S):
+        switch(last_record) {
+          case(ENDEL):   //a sref end el
+          case(STRNAME): //entry point
+            if(record_type == ENDSTR) {last_record = ENDSTR;
+              stream_state = STREAM_S;
+            }
+            else if (record_type == SREF){last_record = SREF;
+              stream_state = SREF_S;
+            }
+            else if (record_type == BOUNDARY) {last_record = BOUNDARY;
+              stream_state = BOUNDARY_S;
+            }
+            else if (record_type == PATH) {last_record = PATH;
+              stream_state = PATH_S;
+            }
+            else if (record_type == TEXT) {last_record = TEXT;
+              stream_state = TEXT_S;
+            }
+            else {
+              //do nothing, records will continue to process until a desired element is seen.
+            }
+            break;//case(STRNAME) || case(ENDEL)
+          default:
+        }//switch(last_record)
+        break; //case(STRUCTURE_S)
+
       case(BOUNDARY_S): //perhaps some other structures
+        switch(last_record){
+          case(BOUNDARY):
+            if (record_type == LAYER) {last_record = LAYER;
+              fread(&layernum, sizeof(uint16_t), 1, in_file);
+              layernum = ntohs(layernum);
+
+            } else {
+              sprintf(strbuf, "Record error: state = BOUNDARY:BOUNDARY, got = %d expect LAYER\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break; //case(BOUNDARY)
+          case(LAYER):
+            if (record_type == DATATYPE) {last_record = DATATYPE;
+              fread(&dtype, sizeof(uint16_t), 1, in_file);
+              dtype = ntohs(dtype);
+            } else {
+              sprintf(strbuf, "Record error: state = BOUNDARY:LAYER, got = %d expect DATATYPE\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break; //case(LAYER)
+
+          case(DATATYPE):
+            if (record_type == XY) {last_record = XY;
+              if (layernum == M1_LAYER_C || layernum == M2_LAYER_C || layernum == M3_LAYER_C ||
+                  layernum == M4_LAYER_C || layernum == M5_LAYER_C || layernum == IO_LNUM) {
+                //only interested in metal layers now + the io shapes
+                //just write whatever it is to the file
+                write_poly(in_file, out_file, (record_len-4)/sizeof(XY_t), layernum, dtype);
+              }
+            }
+            else {
+              sprintf(strbuf, "Record error: state = BOUNDARY:DATATYPE, got = %d expect XY\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(DATATYPE)
+          case(XY):
+            if (record_type == ENDEL) {last_record = ENDEL;
+              stream_state = STRUCTURE_S;
+            }
+            else {
+              sprintf(strbuf, "Record error: state = BOUNDARY:XY, got = %d expect ENDEL\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(XY)
+        }//switch(last_record)
 
         break;//case(BOUNDARY_S)
+
       case(PATH_S): //routing tracks
+        switch(last_record) {
+          case(PATH):
+            if (record_type == LAYER) {last_record = LAYER;
+              fread(&layernum, sizeof(uint16_t), 1, in_file);
+              layernum = ntohs(layernum);
 
+            } else {
+              sprintf(strbuf, "Record error: state = PATH:PATH, got = %d expect LAYER\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break; //case(BOUNDARY)
+          case(LAYER):
+            if (record_type == DATATYPE) {last_record = DATATYPE;
+              fread(&dtype, sizeof(uint16_t), 1, in_file);
+              dtype = ntohs(dtype);
+            } else {
+              sprintf(strbuf, "Record error: state = PATH:LAYER, got = %d expect DATATYPE\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break; //case(LAYER)
+          case(DATATYPE):
+            if(record_type == PATHTYPE) {last_record = PATHTYPE;
+              fread(&pathtype, sizeof(uint16_t), 1, in_file);
+              pathtype = ntohs(pathtype);
+            }
+            else if(record_type == WIDTH){last_record = WIDTH;
+              fread(&width, sizeof(int32_t), 1, in_file);
+              width = ntohl(width);
+            }
+            else if(record_type == XY){last_record = XY;
+              //assume we care about all path objects.
+              write_path(in_file, out_file, (record_len - 4)/sizeof(XY_t), layernum, dtype, pathtype, width, bx, ex);
+            }
+            else {
+              sprintf(strbuf, "Record error: state = PATH:DATATYPE, got = %d expect PATHTYPE || WIDTH || XY\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break; //case(DATATYPE)
+
+          case(PATHTYPE):
+            if(record_type == WIDTH){last_record = WIDTH;
+              fread(&width, sizeof(int32_t), 1, in_file);
+              width = ntohl(width);
+            }
+            else if(record_type == XY){last_record = XY;
+              write_path(in_file, out_file, (record_len - 4)/sizeof(XY_t), layernum, dtype, pathtype, width, bx, ex);
+            }
+            else {
+              sprintf(strbuf, "Record error: state = PATH:PATHTYPE, got = %d expect WIDTH || XY\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(PATHTYPE)
+
+          case(WIDTH):
+            if(record_type == BX){last_record = BX;
+              if (pathtype != 4) {
+                fprintf(stderr, "Record error: BX record seen with pathtype != 4.\n");
+                return 1;
+              }
+              fread(&bx, sizeof(int32_t), 1, in_file);
+              bx = ntohl(bx);
+            } else if (record_type == EX){last_record = EX;
+              if (pathtype != 4) {
+                fprintf(stderr, "Record error: EX record seen with pathtype != 4.\n");
+                return 1;
+              }
+              fread(&ex, sizeof(int32_t), 1, in_file);
+              ex = ntohl(ex);
+            } else if(record_type == XY){last_record = XY;
+              write_path(in_file, out_file, (record_len - 4)/sizeof(XY_t), layernum, dtype, pathtype, width, bx, ex);
+            }
+            else {
+              sprintf(strbuf, "Record error: state = PATH:WIDTH, got = %d expect BX || EX || XY", record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(WIDTH)
+          case(BX):
+            if (record_type == EX){last_record = EX;
+               if (pathtype != 4) {
+                fprintf(stderr, "Record error: EX record seen with pathtype != 4.\n");
+                return 1;
+              }
+              fread(&ex, sizeof(int32_t), 1, in_file);
+              ex = ntohl(ex);
+            } else if(record_type == XY){last_record = XY;
+              write_path(in_file, out_file, (record_len - 4)/sizeof(XY_t), layernum, dtype, pathtype, width, bx, ex);
+            }
+            else {
+              sprintf(strbuf, "Record error: state = PATH:BX, got = %d expect EX || XY", record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(BX)
+          case(EX):
+            if(record_type == XY){last_record = XY;
+              write_path(in_file, out_file, (record_len - 4)/sizeof(XY_t), layernum, dtype, pathtype, width, bx, ex);
+            }
+            else {
+              sprintf(strbuf, "Record error: state = PATH:BX, got = %d expect XY\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(EX)
+          case(XY):
+            if(record_type == ENDEL) {last_record = ENDEL;
+              //reset optional fields to defaults;
+              pathtype = 0;
+              width = 0;
+              bx = 0;
+              ex = 0;
+              stream_state = STRUCTURE_S;
+            }
+            break;
+
+        }//switch(last_record)
         break;//case(PATH_S)
-      case(SREF_S): //vias
 
+      case(SREF_S): // vias
+        switch(last_record) {
+          case(SREF):
+            if(record_type = SNAME) {
+              //check if the name matches
+              fread(strbuf, sizeof(char), record_len - 4, in_file);
+              strbuf[record_len - 4] = '\0';
+              //avoid pcells and contact vias which have already been handled.
+              if(strncmp(strbuf, "sky130", 6) != 0 && strncmp(strbuf, "VIA_L1M1_PR_MR", 14) != 0) {
+                last_record = SNAME;
+                //Search for the structure
+                int found;
+                for (int cell =0; cell < slist->num_structs; cell++) {
+                  if (strcmp(slist->structures[cell]->strname, strbuf) == 0) {
+                    pcell = slist->structures[cell];
+                    found = 1;
+                    break;
+                  }
+                }
+                if (found == 0) {
+                  fprintf(stderr, "Did not find referenced structure \"%s\".\n", strbuf);
+                  return 1;
+                }
+              } else {
+                //if no match, jump back to looking for SREF
+                stream_state = STRUCTURE_S;
+                last_record = ENDEL;
+              }
+            } else {
+              sprintf(strbuf, "Record error: state = SREF:SREF, got = %d expect SNAME.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//cas(SREF)
+          case(SNAME):
+            if(record_type == STRANS) {last_record = STRANS;
+              //check for x axis reflect
+              uint8_t strans_rec;
+              fread(&strans_rec, sizeof(uint8_t), 1, in_file);
+              if ((strans_rec & ((uint8_t)1 << 7)) != 0)
+                reflect = 1;
+            } else if (record_type == XY){last_record = XY;
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+              if(translate_and_write_shapes(out_file, shift, pcell, reflect, rotate) != 0)
+                return 1;
+            } else {
+              sprintf(strbuf, "Record error: state = SREF:SNAME, got = %d expect STRANS || XY.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(SNAME)
+          case(STRANS):
+            if(record_type == MAG){last_record = MAG;
+              fprintf(stderr, "Error: unimplemented feature, SREF:MAG\n");
+              return 1;
+            }
+            else if (record_type == ANGLE) {last_record = ANGLE;
+              //Check if it's 180 flipped.
+              uint8_t angle_rec;
+              fseek(in_file, 1, SEEK_CUR);
+              fread(&angle_rec, sizeof(uint8_t), 1, in_file);
+              //check against rotations of 90, 180, and 270 degrees
+              switch(angle_rec){
+                case(90):
+                  rotate = 1;
+                break;
+                case(180):
+                  rotate = 2;
+                break;
+                default:
+                  fprintf(stderr, "Unsupported angle detected SREF:ANGLE\n");
+              }//switch(angle_rec)
+            }
+            else if (record_type == XY) {last_record = XY;
+              //same as above
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+              if(translate_and_write_shapes(out_file, shift, pcell, reflect, rotate) != 0)
+                return 1;
+            } else {
+              sprintf(strbuf, "Record error: state = SREF:STRANS, got = %d expect MAG || ANGLE || XY.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(STRANS)
+          case(MAG):
+            if (record_type = ANGLE) {last_record = ANGLE;
+              //Check if it's 180 flipped.
+              uint8_t angle_rec;
+              fseek(in_file, 1, SEEK_CUR);
+              fread(&angle_rec, sizeof(uint8_t), 1, in_file);
+              //check against rotations of 90, 180, and 270 degrees
+              switch(angle_rec){
+                case(90):
+                  rotate = 1;
+                break;
+                case(180):
+                  rotate = 2;
+                break;
+                default:
+                  fprintf(stderr, "Unsupported angle detected SREF:ANGLE\n");
+              }//switch(angle_rec)
+            }
+            else if(record_type == XY) {last_record=XY;
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+              if(translate_and_write_shapes(out_file, shift, pcell, reflect, rotate) != 0)
+                return 1;
+            }
+            else{
+              sprintf(strbuf, "Record error: state = SREF:MAG, got = %d expect ANGLE || XY.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(MAG)
+          case(ANGLE):
+            if(record_type == XY) {last_record=XY;
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+              if(translate_and_write_shapes(out_file, shift, pcell, reflect, rotate) != 0)
+                return 1;
+            }
+            break;//case(ANGLE)
+          case(XY):
+            if(record_type == ENDEL){last_record=ENDEL;
+              stream_state = STRUCTURE_S;
+              reflect = 0;
+              rotate = 0;
+            }
+            else {
+              sprintf(strbuf, "Record error: state = SREF:XY, got = %d expect ENDEL.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(XY)
+          default:
+        }//switch(last_record)
         break;//case(SREF_S)
+      case(TEXT_S):
+        switch(last_record) {
+          case(TEXT):
+            if (record_type == LAYER) {last_record = LAYER;
+              //don't care
+            } else {
+              sprintf(strbuf, "Record error: state = TEXT:TEXT, got = %d expect LAYER\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break; //case(TEXT)
+
+          case(LAYER):
+            if (record_type == TEXTTYPE) {last_record = TEXTTYPE;
+              //Don't care
+            }
+            else {
+              sprintf(strbuf, "Record error: state = TEXT:LAYER, got = %d expect TEXTTYPE\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(LAYER)
+
+          case(TEXTTYPE):
+            if (record_type == PRESENTATION)  {last_record = PRESENTATION;} //no action
+            else if (record_type == PATHTYPE) {last_record = PATHTYPE;} //no action
+            else if (record_type == WIDTH)    {last_record = WIDTH;} //no action
+            else if (record_type == STRANS)   {last_record = STRANS;}//no action required for text
+            else if (record_type == XY)       {last_record = XY;
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+            }
+            else {
+              sprintf(strbuf, "Record error: state = TEXT:TEXTTYPE, got = %d expect PRESENTATION || PATHTYPE || WIDTH || STRANS || XY.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(TEXTTYPE)
+
+          case(PRESENTATION):
+            if (record_type == PATHTYPE)    {last_record = PATHTYPE;} //no action
+            else if (record_type == WIDTH)  {last_record = WIDTH;} //no action
+            else if (record_type == STRANS) {last_record = STRANS;} //no action required for text
+            else if (record_type == XY)     {last_record = XY;
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+            } else {
+              sprintf(strbuf, "Record error: state = TEXT:PRESENTATION, got = %d expect PATHTYPE || WIDTH || STRANS || XY.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(PRESENTATION)
+
+          case(PATHTYPE):
+            if (record_type == WIDTH)         {last_record = WIDTH;} //no action
+            else if (record_type == STRANS)   {last_record = STRANS;}//no action required for text.
+            else if (record_type == XY)       {last_record = XY;
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+            } else {
+              sprintf(strbuf, "Record error: state = TEXT:PATHTYPE, got = %d expect WIDTH || STRANS || XY.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(PATHTYPE)
+
+          case(WIDTH):
+            if (record_type == STRANS)   {last_record = STRANS;}//no action required for text.
+            else if (record_type == XY)  {last_record = XY;
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+            } else {
+              sprintf(strbuf, "Record error: state = TEXT:WIDTH, got = %d expect WIDTH || XY.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(WIDTH)
+
+          case(STRANS):
+            if (record_type == MAG) {last_record = MAG;}
+            else if (record_type == ANGLE) {last_record = ANGLE;}
+            else if (record_type == XY) {last_record = XY;
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+            } else {
+              sprintf(strbuf, "Record error: state = TEXT:STRANS, got = %d expect MAG || ANGLE || XY.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(STRANS)
+
+          case(MAG):
+            if (record_type == ANGLE) {last_record = ANGLE;}
+            else if (record_type == XY) {last_record = XY;
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+            } else {
+              sprintf(strbuf, "Record error: state = TEXT:MAG, got = %d expect ANGLE || XY.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(MAG)
+
+          case(ANGLE):
+            if (record_type == XY) {last_record = XY;
+              fread(&shift, sizeof(XY_t), 1, in_file);
+              shift.x = ntohl(shift.x);
+              shift.y = ntohl(shift.y);
+            } else {
+              sprintf(strbuf, "Record error: state = TEXT:MAG, got = %d expect XY.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(ANGLE)
+
+          case(XY):
+            if (record_type == STRING) {last_record = STRING;
+              //get the string
+              fread(iobuf[num_ios].pinname, sizeof(char), record_len - 4, in_file);
+              //terminate
+              iobuf[num_ios].pinname[record_len - 4] = '\0';
+              iobuf[num_ios].xy = shift;
+              num_ios++;
+            } else {
+              sprintf(strbuf, "Record error: state = TEXT:XY, got = %d expect STRING.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;//case(XY)
+
+          case(STRING):
+            if (record_type == ENDEL) {last_record = ENDEL;
+              stream_state = STRUCTURE_S;
+            } else {
+              sprintf(strbuf, "Record error: state = TEXT:STRING, got = %d expect ENDEL.\n", (char) record_type);
+              perror(strbuf);
+              return 1;
+            }
+            break;
+            default:
+          }
+      break;//case(TEXT_S)
       default:
     }//switch(stream_state)
 
@@ -1108,5 +1608,15 @@ do {
     fseek(in_file, cursor + sizeof(uint8_t) * record_len, SEEK_SET);
   }
   while(last_record != ENDLIB);
+  fprintf(out_file, "{}],\n");
+
+  //print ios
+  fprintf(out_file, "\"io\": {\n");
+  for (int io = 0; io < num_ios; io++) {
+    if(io) fprintf(out_file, ",\n");
+    fprintf(out_file, "\"%s\" : [%d, %d]", iobuf[io].pinname, iobuf[io].xy.x, iobuf[io].xy.y);
+  }
+  fprintf(out_file, "}\n");
+
   return 0;
 }

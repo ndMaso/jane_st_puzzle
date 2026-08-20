@@ -144,6 +144,8 @@ enum RType {
   BOX = 45,
   BOXTYPE = 46,
   PLEX = 47,
+  BX = 48,
+  EX = 49,
   TAPENM = 50 ,
   APECODE = 51,
   FORMAT = 54,
@@ -209,6 +211,11 @@ int write_contacts(FILE* out_file, contact_list_t* buf);
 //final pass through file for metal/via routing layers.
 int write_routing(FILE*in_file, FILE* out_file, structure_list_t* slist);
 
+int write_poly(FILE* in_file, FILE* out_file, int len, uint16_t lnum, uint16_t dtype);
+
+int write_path(FILE* in_file, FILE* out_file, int len, uint16_t lnum, uint16_t dtype, uint16_t pathtype, int32_t width,
+  int32_t bx, int32_t ex);
+
 //Creates an association between pin shapes, pin labels, and the LI shape of the pin.
 //s : one structure, filled with pins unassigned to pin_lbls.
 //p : list of LI shapes in the structure
@@ -220,6 +227,9 @@ int inside_poly(XY_t xy, poly_t* p);
 //the referenced structure and prints box objects
 int translate_and_copy_contacts(XY_t shift, sref_t * sref, contact_t* out, int reflect, int rotate);
 
+//like above but writes all shapes to output file
+int translate_and_write_shapes(FILE* out_file, XY_t shift, sref_t * sref, int reflect, int rotate);
+
 //takes record data in an sref, applies the transformation to the elements of
 //the referenced structure and prints shape objects
 int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, int reflect, int rotate);
@@ -227,3 +237,8 @@ int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, 
 XY_t rot90(XY_t xy);
 
 XY_t rot180(XY_t xy);
+
+
+box_t rot90_box(box_t box);
+
+box_t rot180_box(box_t box);

@@ -77,8 +77,6 @@ void process_struct(FILE* fd, sref_t** s) {
 
 //assumes big endianness
 int write_units(FILE* fd, uint64_t unit1, uint64_t unit2) {
-  printf("Units binary: %llu, %llu\n", unit1, unit2);
-
   uint8_t top_byte = unit1>>(64-8);
   uint64_t one = 1;
   uint8_t exp = top_byte & ((one<<7) - 1);
@@ -132,7 +130,7 @@ int write_units(FILE* fd, uint64_t unit1, uint64_t unit2) {
   mantissa_for_print = mantissa >> 48;
   true_exp = (exp - 64);
   double abs_unit = ((double) mantissa_for_print / 256.0) * pow(16.0, (double) true_exp);
-  fprintf(fd, "{database_unit : %f, abs_unit : %f}\n", database_unit, abs_unit);
+  printf("{database_unit : %f, abs_unit : %f}\n", database_unit, abs_unit);
   return 0;
 }
 
@@ -167,7 +165,7 @@ int assign_pins(sref_t* s, polylist_t* pl) {
     int poly_index = 0;
     int found = 0;
     for (; poly_index < pl->num_polys; poly_index++) {
-      if (inside_poly(s->pin_lbls[lbl]->xy, &(pl->polys[poly_index])) == 1) {
+      if (inside_poly(s->pin_lbls[lbl]->xy, &(pl->polys[poly_index])) != 0) {
         //Copy this poly into the structure->pin
         memcpy(s->pin_lbls[lbl]->LI_poly.coords, pl->polys[poly_index].coords, sizeof(XY_t)*pl->polys[poly_index].num_points);
         s->pin_lbls[lbl]->LI_poly.l_rb = pl->polys[poly_index].l_rb;
@@ -204,6 +202,7 @@ int inside_poly(XY_t xy, poly_t* p) {
   XY_t cur = p->coords[0];
   XY_t next = p->coords[1];
   if ((next.y - cur.y) != 0) h_vb = 0;
+  else h_vb = 1;
 
   for (int edge = 1; edge < p->num_points; edge++) {
     XY_t this = p->coords[edge];
@@ -370,13 +369,13 @@ int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, 
       test.coords[coord].x = test.coords[coord].x + shift.x;
       test.coords[coord].y = test.coords[coord].y + shift.y;
     }
-    if (strcmp(sref->strname, "sky130_fd_sc_hd__a31oi_2") == 0 && strcmp(sref->pin_lbls[shape]->pinname, "A2") == 0) {
-      printf("ref %d, rot %d, x %d, y %d\n", reflect, rotate, shift.x, shift.y);
-      for (int coord = 0; coord < test.num_points; coord++) {
-        printf("(%d, %d)->", test.coords[coord].x, test.coords[coord].y);
-       }
-       printf("\n");
-    }
+    //if (strcmp(sref->strname, "sky130_fd_sc_hd__a31oi_2") == 0 && strcmp(sref->pin_lbls[shape]->pinname, "A2") == 0) {
+    //  printf("ref %d, rot %d, x %d, y %d\n", reflect, rotate, shift.x, shift.y);
+    //  for (int coord = 0; coord < test.num_points; coord++) {
+    //    printf("(%d, %d)->", test.coords[coord].x, test.coords[coord].y);
+    //   }
+    //   printf("\n");
+    //}
     //if (TEST == 0) {
     //  TEST = 1;
     //  for (int asdf = 0 ; asdf < test.num_points; asdf++) {
@@ -409,7 +408,7 @@ int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, 
 
 int write_contacts(FILE* out_file, contact_list_t* clist) {
   char pinname_copy[128];
-  fprintf(out_file, "\n{ clist : [\n"); //open object, open array
+  fprintf(out_file, "\"clist\" : [\n"); //open object, open array
   for(int contact = 0; contact < clist->num_contacts; contact++) {
     //properties to label
     //  pin : true          // designated the net segment as a driver/load,
@@ -429,9 +428,159 @@ int write_contacts(FILE* out_file, contact_list_t* clist) {
     XY_t centre = (XY_t) {clist->contacts[contact].pin.x1/2+clist->contacts[contact].pin.x2/2,
                           clist->contacts[contact].pin.y1/2+clist->contacts[contact].pin.y2/2};
     if(contact) fprintf(out_file, ",\n");
-    fprintf(out_file, "  {pin:true, driver:%d, pinname:%s, loc:[%d,%d]}", driver, clist->contacts[contact].pinname, centre.x, centre.y);
+    fprintf(out_file, "  {\"type\":\"pin\", \"driver\":%d, \"pinname\":\"%s\", \"loc\":[%d,%d]}", driver, clist->contacts[contact].pinname, centre.x, centre.y);
 
   }
-  fprintf(out_file, "]}\n");
+  fprintf(out_file, "],\n");
   return 0;
+}
+
+//in_file points to the first byte of the XY data
+int write_poly(FILE* in_file, FILE* out_file, int coords, uint16_t lnum, uint16_t dtype) {
+  if (lnum > 0) {
+    //open an object
+    XY_t xy;
+    fprintf(out_file, "{\"type\": \"shape\", \"layer\":%d, \"dtype\":%d, \"coords\": [\n", lnum, dtype);
+    for (int c = 0; c < coords; c++) {
+      if (c) fprintf(out_file, ",");
+      fread(&xy, sizeof(XY_t), 1, in_file);
+      xy.x = ntohl(xy.x);
+      xy.y = ntohl(xy.y);
+      fprintf(out_file, "[%d,%d]", xy.x, xy.y);
+    }
+  }
+  fprintf(out_file, "]},\n");
+  return 0;
+}
+
+//breaks a path into rectangles
+int write_path(FILE* in_file, FILE* out_file, int len, uint16_t lnum, uint16_t dtype, uint16_t pathtype, int32_t width,
+  int32_t bx, int32_t ex) {
+  if (len != 2) {
+    fprintf(stderr, "Pathtype with not 2 points: %d\n", len);
+  }
+  if(lnum > 0) {
+    XY_t xy_start;
+    fprintf(out_file, "{\"type\": \"rect\", \"layer\":%d, \"dtype\":%d,", lnum, dtype);
+    //grab first point
+    fread(&xy_start, sizeof(XY_t), 1, in_file);
+    xy_start.x = ntohl(xy_start.x);
+    xy_start.y = ntohl(xy_start.y);
+
+    XY_t xy_end;
+    fread(&xy_end, sizeof(XY_t), 1, in_file);
+    xy_end.x = ntohl(xy_end.x);
+    xy_end.y = ntohl(xy_end.y);
+
+    int32_t x1, x2, y1, y2; //conventional box parameters
+    int direction = (xy_end.y == xy_start.y); // 1 for horizontal
+    if (pathtype == 4) {
+      if (direction) {
+        if (xy_start.x < xy_end.x) { // rightward
+          xy_start.x -= bx;
+          xy_end.x += ex;
+        } else { //leftward
+          xy_start.x += bx;
+          xy_end.x   -= ex;
+        }
+      }else {
+        if(xy_start.y < xy_end.y) { //upward
+          xy_start.y -= bx;
+          xy_end.y   += ex;
+        } else { //downward
+          xy_start.y += bx;
+          xy_end.y   -= ex;
+        }
+      }
+    }
+    switch(pathtype) {
+      case(4):
+      case(0):
+        if(direction) { //horizontal
+          x1 = min(xy_start.x, xy_end.x);
+          x2 = max(xy_start.x, xy_end.x);
+          y1 = min(xy_start.y, xy_end.y) - width /2;
+          y2 = max(xy_start.y, xy_end.y) + width /2;
+          if(pathtype == 4) {
+            x1 -= bx;
+          }
+          fprintf(out_file, "\"x\" : [%d,%d], \"y\": [%d,%d]}", x1,x2,y1,y2);
+        } else {
+          x1 = min(xy_start.x, xy_end.x) - width /2;
+          x2 = max(xy_start.x, xy_end.x) + width /2;
+          y1 = min(xy_start.y, xy_end.y);
+          y2 = max(xy_start.y, xy_end.y);
+          fprintf(out_file, "\"x\" : [%d,%d], \"y\": [%d,%d]}", x1,x2,y1,y2);
+        }
+        break;
+      case(2):
+        if(direction) { //horizontal
+          x1 = min(xy_start.x, xy_end.x) - width /2;
+          x2 = max(xy_start.x, xy_end.x) + width /2;
+          y1 = min(xy_start.y, xy_end.y) - width /2;
+          y2 = max(xy_start.y, xy_end.y) + width /2;
+          fprintf(out_file, "\"x\" : [%d,%d], \"y\": [%d,%d]}", x1,x2,y1,y2);
+        } else {
+          x1 = min(xy_start.x, xy_end.x) - width /2;
+          x2 = max(xy_start.x, xy_end.x) + width /2;
+          y1 = min(xy_start.y, xy_end.y) - width /2;
+          y2 = max(xy_start.y, xy_end.y) + width /2;
+          fprintf(out_file, "\"x\" : [%d,%d], \"y\": [%d,%d]}", x1,x2,y1,y2);
+        }
+        break;
+      default:
+        fprintf(stderr, "write_path: Invalid pathtype.\n");
+    }
+    fprintf(out_file, ",\n");
+  }
+  return 0;
+}
+
+//these are all box types, being vias
+int translate_and_write_shapes(FILE* out_file, XY_t shift, sref_t * sref, int reflect, int rotate) {
+  //iterate through shapes in sref, transform and copy to output.
+  int32_t reflect_factor = (reflect == 0) ? 1 : -1;
+  box_t box;
+
+  for (int shape = 0; shape < sref->n_pins; shape++) {
+    box = sref->pins[shape]->pin;
+    //careful to preserve min/max
+    if (reflect) {box.y1 = - sref->pins[shape]->pin.y2; -sref->pins[shape]->pin.y1;};
+    switch(rotate) {
+      case(0):
+        break;
+      case(1):
+        box = rot90_box(box);
+        break;
+      case(2):
+        box = rot180_box(box);
+        break;
+      default:
+        fprintf(stderr, "translate_and_write_shapes: Inalid rotation argn.\n");
+    }
+
+        fprintf(out_file, "{\"type\":\"rect\", \"layer\":%d, \"dtype\":%d, \"x\":[%d,%d], \"y\":[%d,%d]}\n", sref->pins[shape]->layernum,
+          sref->pins[shape]->dtype, box.x1 + shift.x, box.x2 + shift.x,
+          box.y1 + shift.y, box.y2 + shift.y);
+      }
+
+  return 0;
+}
+
+//90 degrees counter clockwise in Cartesian coords
+box_t rot90_box(box_t b) {
+  box_t o;
+  o.x1 = -b.y2;
+  o.x2 = -b.y1;
+  o.y1 = b.x1;
+  o.y2 = b.x2;
+}
+
+//180 degrees counter clockwise in Cartesian coords
+box_t rot180_box(box_t b) {
+  box_t o;
+  o.y1 = -b.y2;
+  o.y2 = -b.y1;
+  o.x1 = -b.x2;
+  o.x2 = -b.x1;
 }

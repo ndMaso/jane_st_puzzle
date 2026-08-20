@@ -67,12 +67,12 @@ int main(int argc, char* argv[]) {
     printf("Got through to top struct.\n");
     for (int s = 0 ; s<slist->num_structs; s++) {
       sref_t* pcell = slist->structures[s];
-      fprintf(out_file, "%s\n ", pcell->strname);
+      printf("%s\n ", pcell->strname);
       for (int pin = 0 ; pin < pcell->n_lbls; pin++) {
         //fprintf(out_file, " %s: (%d, %d), ", pcell->pin_lbls[pin]->pinname, pcell->pin_lbls[pin]->x[0], pcell->pin_lbls[pin]->y[0]);
-        fprintf(out_file, " %s, ", pcell->pin_lbls[pin]->pinname);
+        printf(" %s, ", pcell->pin_lbls[pin]->pinname);
       }
-      fprintf(out_file, "\n");
+      printf("\n");
     }
   }
 
@@ -131,8 +131,13 @@ int main(int argc, char* argv[]) {
 
   if (error == 0) {
     //print contact list.
+    fprintf(out_file, "{\n");
     write_contacts(out_file, clist);
+
     write_routing(in_file, out_file, slist);
+
+    //terminate object
+    fprintf(out_file, "}\n");
   }
   printf("JSON file write finished.\n");
 
