@@ -7,6 +7,19 @@
   #include <math.h>
   #include <winsock2.h>
   #include "gds_utils.h"
+
+
+#define LI_LAYER_C 67
+#define M1_LAYER_C 68
+#define M2_LAYER_C 69
+#define M3_LAYER_C 70
+#define M4_LAYER_C 71
+#define M5_LAYER_C 72
+
+#define LI_PIN_DTYPE 16
+#define LI_TEXT_DTYPE 5
+#define DRAW_DTYPE 20
+#define CONTACT_DTYPE 44
 #endif
 
 //standardized format for adding boxes to a list
@@ -135,6 +148,9 @@ int write_units(FILE* fd, uint64_t unit1, uint64_t unit2) {
 }
 
 void process_pin_name(char* name, sref_t* s, int32_t X, int32_t Y) {
+  if(strcmp(name, "\0") == 0) {
+    printf("Null pin name.\n");
+  }
   int unique = 1;
   //check for uniqueness of the pin name in the structure
   for (int name_inst = 0; name_inst < s->n_lbls; name_inst++) {
@@ -149,6 +165,7 @@ void process_pin_name(char* name, sref_t* s, int32_t X, int32_t Y) {
     s->pin_lbls[s->n_lbls] = malloc(sizeof(pin_lbl_t));
     s->pin_lbls[s->n_lbls]->xy.x = X;
     s->pin_lbls[s->n_lbls]->xy.y = Y;
+    s->pin_lbls[s->n_lbls]->n_contacts = 0;
     strcpy(s->pin_lbls[s->n_lbls]->pinname, name);
     s->n_lbls++;
   }
@@ -165,6 +182,8 @@ int assign_pins(sref_t* s, polylist_t* pl) {
     int poly_index = 0;
     int found = 0;
     for (; poly_index < pl->num_polys; poly_index++) {
+      //skip non pin shapes
+      if (pl->polys[poly_index].layer != LI_LAYER_C || pl->polys[poly_index].dtype != DRAW_DTYPE) continue;
       if (inside_poly(s->pin_lbls[lbl]->xy, &(pl->polys[poly_index])) != 0) {
         //Copy this poly into the structure->pin
         memcpy(s->pin_lbls[lbl]->LI_poly.coords, pl->polys[poly_index].coords, sizeof(XY_t)*pl->polys[poly_index].num_points);
@@ -178,7 +197,7 @@ int assign_pins(sref_t* s, polylist_t* pl) {
     if (found == 0) {
       fprintf(stderr, "Error: None of %d shapes cover Pin %s of Structure %s at (%d, %d)\n", pl->num_polys, s->pin_lbls[lbl]->pinname, s->strname, s->pin_lbls[lbl]->xy.x, s->pin_lbls[lbl]->xy.y);
       for (poly_index = 0; poly_index < pl->num_polys; poly_index++) {
-        printf("Pin location (%d, %d), ", s->pin_lbls[lbl]->xy.x, s->pin_lbls[lbl]->xy.y);
+        printf("Label location (%d, %d), ", s->pin_lbls[lbl]->xy.x, s->pin_lbls[lbl]->xy.y);
         printf("Poly wound %d:", pl->polys[poly_index].l_rb);
         for (int ppp = 0; ppp < pl->polys[poly_index].num_points ; ppp++) {
           printf("(%d, %d)-> ", pl->polys[poly_index].coords[ppp].x, pl->polys[poly_index].coords[ppp].y);
@@ -190,6 +209,51 @@ int assign_pins(sref_t* s, polylist_t* pl) {
   return 0;
 }
 
+int store_extra_contacts(sref_t* s, polylist_t* polylist) {
+  char* covered = calloc(s->n_pins, sizeof(char));
+  for (int p = 0; p < s->n_pins; p++) {
+    if (covered[p]) continue;
+    if (s->pins[p]->layernum == LI_LAYER_C && s->pins[p]->dtype == CONTACT_DTYPE) {
+      XY_t centre = (XY_t){(s->pins[p]->pin.x1 + s->pins[p]->pin.x2)/2, (s->pins[p]->pin.y1 + s->pins[p]->pin.y2)/2};
+      //check if centre of pin is in any LI shape stored with pinlbl
+      for (int pinl = 0; pinl < s->n_lbls; pinl++) {
+        if(strcmp(s->pin_lbls[pinl]->pinname, "VGND") == 0 || strcmp(s->pin_lbls[pinl]->pinname, "VPWR") == 0) continue;
+        if(s->pins[p]->layernum != LI_LAYER_C) continue;
+        if (inside_poly(centre, &s->pin_lbls[pinl]->LI_poly)){
+          covered[p] = 1;
+          //add to pin_lbl.contacts
+          s->pin_lbls[pinl]->contacts[s->pin_lbls[pinl]->n_contacts] = centre;
+          s->pin_lbls[pinl]->n_contacts++;
+          //check if any metal1 shapes in the object
+          for (int poly = 0; poly < polylist->num_polys; poly++) {
+            if(polylist->polys[poly].layer == M1_LAYER_C && polylist->polys[poly].dtype == DRAW_DTYPE) {
+              if(inside_poly(centre, &polylist->polys[poly])) {
+                //copy the shape
+                s->extra[s->n_extra] = malloc(1*sizeof(poly_t));
+                *s->extra[s->n_extra] = polylist->polys[poly];
+                s->n_extra++;
+
+                //now search for any contacts other than p touching THIS shape..........
+                for (int p2 = 0; p2 < s->n_pins; p2++) {
+                  if (covered[p2] || s->pins[p2]->layernum != LI_LAYER_C) continue;
+                  XY_t centre2 = (XY_t){(s->pins[p2]->pin.x1 + s->pins[p2]->pin.x2)/2, (s->pins[p2]->pin.y1 + s->pins[p2]->pin.y2)/2};
+                  if (inside_poly(centre2, &polylist->polys[poly])) {
+                    covered[p2] = 1;
+                    printf("%d, %s x[%d, %d], y[%d, %d]\n", p2, s->pin_lbls[pinl]->pinname, s->pins[p2]->pin.x1 , s->pins[p2]->pin.x2, s->pins[p2]->pin.y1 , s->pins[p2]->pin.y2);
+                    s->pin_lbls[pinl]->contacts[s->pin_lbls[pinl]->n_contacts] = centre2;
+                    s->pin_lbls[pinl]->n_contacts++;
+                  }
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  free(covered);
+}
 
 //
 int inside_poly(XY_t xy, poly_t* p) {
@@ -329,12 +393,12 @@ XY_t rot180(XY_t xy) {
   return o;
 }
 
-int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, int reflect, int rotate) {
+int translate_and_copy_shapes(FILE* out_file, XY_t shift, sref_t * sref, contact_list_t* clist, int reflect, int rotate) {
   poly_t test;
   char uid[16];
   int TEST = 0;
-  //ignore vias and diodes
-  if (sref->n_lbls == 0)// || strcmp(sref->pin_lbls[0]->pinname, "DIODE")==0)
+  //ignore vias
+  if (sref->n_lbls == 0)
     return 0;
   //for each polygon instance, transform and check for intersection with each unlabelled contact
   for (int shape = 0; shape < sref->n_lbls; shape++) {
@@ -344,45 +408,8 @@ int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, 
     test.l_rb = (reflect != 0) ? (! test.l_rb) : test.l_rb;
     test.num_points = sref->pin_lbls[shape]->LI_poly.num_points;
     //don't care about test.bound
-    switch(rotate){
-      case(0):
-        for (int coord = 0; coord < test.num_points; coord++) {
-          if (reflect != 0) test.coords[coord].y = - test.coords[coord].y;
-        }
-        break;
-      case(1): //90 degrees
-        for (int coord = 0; coord < test.num_points; coord++) {
-          if (reflect != 0) test.coords[coord].y = - test.coords[coord].y;
-          test.coords[coord] = rot90(test.coords[coord]);
-        }
-        break;
-      case(2): //180 degrees
-        for (int coord = 0; coord < test.num_points; coord++) {
-          if (reflect != 0) test.coords[coord].y = - test.coords[coord].y;
-          test.coords[coord] = rot180(test.coords[coord]);
-        }
-        break;
-      default:
-        fprintf(stderr, "Error: invalid angle option \"%d\".", rotate);
-    }//switch(rotate)
-    for (int coord = 0; coord < test.num_points; coord++) {
-      test.coords[coord].x = test.coords[coord].x + shift.x;
-      test.coords[coord].y = test.coords[coord].y + shift.y;
-    }
-    //if (strcmp(sref->strname, "sky130_fd_sc_hd__a31oi_2") == 0 && strcmp(sref->pin_lbls[shape]->pinname, "A2") == 0) {
-    //  printf("ref %d, rot %d, x %d, y %d\n", reflect, rotate, shift.x, shift.y);
-    //  for (int coord = 0; coord < test.num_points; coord++) {
-    //    printf("(%d, %d)->", test.coords[coord].x, test.coords[coord].y);
-    //   }
-    //   printf("\n");
-    //}
-    //if (TEST == 0) {
-    //  TEST = 1;
-    //  for (int asdf = 0 ; asdf < test.num_points; asdf++) {
-    //    printf("(%d, %d)-> ", test.coords[asdf].x, test.coords[asdf].y);
-    //  }
-    //  printf("\n");
-   // }
+    transform_shape(&test, shift, reflect, rotate);
+
     //lazy sweep through whole contact list, not tooooo big
     for (int contact = 0; contact < clist->num_contacts; contact++) {
       //check for unlabelled contact
@@ -403,7 +430,92 @@ int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, 
     }
   }
 
+  //copy extra shapes into output.
+  for (int shape = 0; shape < sref->n_extra; shape++) {
+    memcpy(test.coords, sref->extra[shape]->coords, sizeof(XY_t)*sref->extra[shape]->num_points);
+    test.l_rb = sref->extra[shape]->l_rb;
+    test.l_rb = (reflect != 0) ? (! test.l_rb) : test.l_rb;
+    test.num_points = sref->extra[shape]->num_points;
+    fprintf(out_file, "{\"type\":\"shape\", \"layer\":%d, \"dtype\":%d, \"coords\":[\n",
+      sref->extra[shape]->layer,sref->extra[shape]->dtype);
+    transform_shape(&test, shift, reflect, rotate);
+    for (int point = 0; point < test.num_points; point++) {
+      fprintf(out_file, "[%d,%d],", test.coords[point].x, test.coords[point].y);
+    }
+    fseek(out_file, -1, SEEK_CUR);
+    fprintf(out_file, "]},\n");
+  }
+  //write extra contacts as well
+  char full_pinname[128];
+  int total_pins = 0;
+  for(int pin = 0; pin < sref->n_lbls; pin++) {
+    int driver = 0;
+    char *pinlbl = sref->pin_lbls[pin]->pinname;
+    sprintf(full_pinname, "%s_%d/%s", sref->strname, sref->next_uid, sref->pin_lbls[pin]->pinname);
+    if (strcmp(pinlbl,"Q") == 0 || strcmp(pinlbl,"Y") == 0 || strcmp(pinlbl,"X") == 0 ||
+      strcmp(pinlbl,"LO") == 0 || strcmp(pinlbl,"HI") == 0  )  {
+      driver = 1;
+    }
+    //printf(", contacts %d", sref->pin_lbls[pin]->n_contacts);
+    XY_t point;
+    for(int contact = 0; contact < sref->pin_lbls[pin]->n_contacts; contact++, total_pins++) {
+      point = sref->pin_lbls[pin]->contacts[contact];
+      point = transform_point(point, shift, reflect, rotate);
+      fprintf(out_file, "{\"type\":\"pin\", \"driver\":%d, \"pinname\":\"%s\", \"loc\":[%d,%d]},\n",
+        driver, full_pinname, point.x, point.y);
+    }
+  }
+
   return 0;
+}
+
+XY_t transform_point(XY_t p, XY_t shift, int reflect, int rotate) {
+  switch(rotate){
+      case(0):
+          if (reflect != 0) p.y = - p.y;
+        break;
+      case(1): //90 degrees
+          if (reflect != 0) p.y = - p.y;
+          p = rot90(p);
+        break;
+      case(2): //180 degrees
+          if (reflect != 0) p.y = - p.y;
+          p = rot180(p);
+        break;
+      default:
+        fprintf(stderr, "Error: invalid angle option \"%d\".", rotate);
+    }//switch(rotate)
+      p.x = p.x + shift.x;
+      p.y = p.y + shift.y;
+  return p;
+}
+
+void transform_shape(poly_t* p, XY_t shift, int reflect, int rotate) {
+  switch(rotate){
+      case(0):
+        for (int coord = 0; coord < p->num_points; coord++) {
+          if (reflect != 0) p->coords[coord].y = - p->coords[coord].y;
+        }
+        break;
+      case(1): //90 degrees
+        for (int coord = 0; coord < p->num_points; coord++) {
+          if (reflect != 0) p->coords[coord].y = - p->coords[coord].y;
+          p->coords[coord] = rot90(p->coords[coord]);
+        }
+        break;
+      case(2): //180 degrees
+        for (int coord = 0; coord < p->num_points; coord++) {
+          if (reflect != 0) p->coords[coord].y = - p->coords[coord].y;
+          p->coords[coord] = rot180(p->coords[coord]);
+        }
+        break;
+      default:
+        fprintf(stderr, "Error: invalid angle option \"%d\".", rotate);
+    }//switch(rotate)
+    for (int coord = 0; coord < p->num_points; coord++) {
+      p->coords[coord].x = p->coords[coord].x + shift.x;
+      p->coords[coord].y = p->coords[coord].y + shift.y;
+    }
 }
 
 int write_contacts(FILE* out_file, contact_list_t* clist) {
@@ -422,7 +534,8 @@ int write_contacts(FILE* out_file, contact_list_t* clist) {
     char *pinlbl = strtok(pinname_copy, "/");
 
     pinlbl = strtok(NULL, "/");
-    if (strcmp(pinlbl,"Q") == 0 || strcmp(pinlbl,"Y") == 0 || strcmp(pinlbl,"X") == 0)  {
+    if (strcmp(pinlbl,"Q") == 0 || strcmp(pinlbl,"Y") == 0 || strcmp(pinlbl,"X") == 0 ||
+        strcmp(pinlbl,"LO") == 0 || strcmp(pinlbl,"HI") == 0  )  {
       driver = 1;
     }
     XY_t centre = (XY_t) {clist->contacts[contact].pin.x1/2+clist->contacts[contact].pin.x2/2,
@@ -440,16 +553,36 @@ int write_poly(FILE* in_file, FILE* out_file, int coords, uint16_t lnum, uint16_
   if (lnum > 0) {
     //open an object
     XY_t xy;
-    fprintf(out_file, "{\"type\": \"shape\", \"layer\":%d, \"dtype\":%d, \"coords\": [\n", lnum, dtype);
-    for (int c = 0; c < coords; c++) {
-      if (c) fprintf(out_file, ",");
+    if (coords ==5 ) {
+      box_t box;
       fread(&xy, sizeof(XY_t), 1, in_file);
       xy.x = ntohl(xy.x);
       xy.y = ntohl(xy.y);
-      fprintf(out_file, "[%d,%d]", xy.x, xy.y);
+      box.x1 = xy.x; box.x2 = xy.x; box.y1 = xy.y; box.y2 = xy.y;
+      for (int c = 1; c < coords; c++) {
+        fread(&xy, sizeof(XY_t), 1, in_file);
+        xy.x = ntohl(xy.x);
+        xy.y = ntohl(xy.y);
+        box.x1 = (xy.x < box.x1) ? xy.x : box.x1;
+        box.x2 = (xy.x > box.x2) ? xy.x : box.x2;
+        box.y1 = (xy.y < box.y1) ? xy.y : box.y1;
+        box.y2 = (xy.y > box.y2) ? xy.y : box.y2;
+      }
+      fprintf(out_file, "{\"type\": \"rect\", \"layer\":%d, \"dtype\":%d,\"x\":[%d,%d], \"y\":[%d,%d]},\n", lnum, dtype, box.x1, box.x2, box.y1, box.y2);
+      //print a rect
+    }else {
+      //print a shape
+      fprintf(out_file, "{\"type\": \"shape\", \"layer\":%d, \"dtype\":%d, \"coords\": [\n", lnum, dtype);
+      for (int c = 0; c < coords; c++) {
+        if (c) fprintf(out_file, ",");
+        fread(&xy, sizeof(XY_t), 1, in_file);
+        xy.x = ntohl(xy.x);
+        xy.y = ntohl(xy.y);
+        fprintf(out_file, "[%d,%d]", xy.x, xy.y);
+      }
+    fprintf(out_file, "]},\n");
     }
   }
-  fprintf(out_file, "]},\n");
   return 0;
 }
 
@@ -539,13 +672,16 @@ int write_path(FILE* in_file, FILE* out_file, int len, uint16_t lnum, uint16_t d
 //these are all box types, being vias
 int translate_and_write_shapes(FILE* out_file, XY_t shift, sref_t * sref, int reflect, int rotate) {
   //iterate through shapes in sref, transform and copy to output.
+  if(strcmp(sref->strname, "sky130_fd_sc_hd__tapvpwrvgnd_1") == 0) {
+    printf("printing a tap\n");
+  }
   int32_t reflect_factor = (reflect == 0) ? 1 : -1;
   box_t box;
 
   for (int shape = 0; shape < sref->n_pins; shape++) {
     box = sref->pins[shape]->pin;
     //careful to preserve min/max
-    if (reflect) {box.y1 = - sref->pins[shape]->pin.y2; -sref->pins[shape]->pin.y1;};
+    if (reflect) {box.y1 = - sref->pins[shape]->pin.y2; box.y2 = -sref->pins[shape]->pin.y1;};
     switch(rotate) {
       case(0):
         break;
@@ -559,7 +695,7 @@ int translate_and_write_shapes(FILE* out_file, XY_t shift, sref_t * sref, int re
         fprintf(stderr, "translate_and_write_shapes: Inalid rotation argn.\n");
     }
 
-        fprintf(out_file, "{\"type\":\"rect\", \"layer\":%d, \"dtype\":%d, \"x\":[%d,%d], \"y\":[%d,%d]}\n", sref->pins[shape]->layernum,
+        fprintf(out_file, "{\"type\":\"rect\", \"layer\":%d, \"dtype\":%d, \"x\":[%d,%d], \"y\":[%d,%d]},\n", sref->pins[shape]->layernum,
           sref->pins[shape]->dtype, box.x1 + shift.x, box.x2 + shift.x,
           box.y1 + shift.y, box.y2 + shift.y);
       }

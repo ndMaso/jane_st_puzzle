@@ -65,15 +65,7 @@ int main(int argc, char* argv[]) {
   if (error == 0) {
     //next stage
     printf("Got through to top struct.\n");
-    for (int s = 0 ; s<slist->num_structs; s++) {
-      sref_t* pcell = slist->structures[s];
-      printf("%s\n ", pcell->strname);
-      for (int pin = 0 ; pin < pcell->n_lbls; pin++) {
-        //fprintf(out_file, " %s: (%d, %d), ", pcell->pin_lbls[pin]->pinname, pcell->pin_lbls[pin]->x[0], pcell->pin_lbls[pin]->y[0]);
-        printf(" %s, ", pcell->pin_lbls[pin]->pinname);
-      }
-      printf("\n");
-    }
+
   }
 
   //assume less than 8192 pins.
@@ -90,16 +82,25 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "Did not find the via structure.\n");
   }
 
-  if(error == 0) {
-    clist->contacts = malloc(sizeof(contact_t) * 8192);
-    error = build_contact_list(in_file, slist->structures[via_struct], clist);
-    if (error != 0)
-      printf("Built contact list, size %d.\n", clist->num_contacts);
+  for (int i = 0; i < slist->num_structs; i++) {
+    if (slist->structures[i]->n_pins > 0) printf("%s, l %d ,d %d\n", slist->structures[i]->strname, slist->structures[i]->pins[0]->layernum, slist->structures[i]->pins[0]->dtype);
+    else printf("%s NOTHING\n", slist->structures[i]->strname);
   }
 
   if(error == 0) {
+    clist->contacts = malloc(sizeof(contact_t) * 8192);
+    error = build_contact_list(in_file, slist->structures[via_struct], clist);
+    if (error == 0)
+      printf("Built contact list, size %d.\n", clist->num_contacts);
+  }
+  //start object
+  fprintf(out_file, "{\n");
+  fprintf(out_file, "\"extra_objs\" :[\n");
+  if(error == 0) {
     error = label_contacts(in_file, out_file, clist, slist);
   }
+  fseek(out_file, -3, SEEK_CUR);
+  fprintf(out_file, "\n],\n");
   if(error == 0) {
     int no_label = 0;
     for (int contact = 0; contact < clist->num_contacts; contact++) {
@@ -129,9 +130,18 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  for (int s = 0 ; s<slist->num_structs; s++) {
+      sref_t* pcell = slist->structures[s];
+      printf("%s: %d insts\n ", pcell->strname, pcell->next_uid);
+      for (int pin = 0 ; pin < pcell->n_lbls; pin++) {
+        //fprintf(out_file, " %s: (%d, %d), ", pcell->pin_lbls[pin]->pinname, pcell->pin_lbls[pin]->x[0], pcell->pin_lbls[pin]->y[0]);
+        printf(" %s, ", pcell->pin_lbls[pin]->pinname);
+      }
+      printf("\n");
+    }
+
   if (error == 0) {
     //print contact list.
-    fprintf(out_file, "{\n");
     write_contacts(out_file, clist);
 
     write_routing(in_file, out_file, slist);

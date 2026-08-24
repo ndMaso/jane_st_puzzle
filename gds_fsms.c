@@ -7,20 +7,19 @@
   #include <math.h>
   #include <winsock2.h>
   #include "gds_utils.h"
+
+  #define LI_LAYER_C 67
+  #define M1_LAYER_C 68
+  #define M2_LAYER_C 69
+  #define M3_LAYER_C 70
+  #define M4_LAYER_C 71
+  #define M5_LAYER_C 72
+
+  #define LI_PIN_DTYPE 16
+  #define LI_TEXT_DTYPE 5
+  #define DRAW_DTYPE 20
+  #define CONTACT_DTYPE 44
 #endif
-
-
-#define LI_LAYER_C 67
-#define M1_LAYER_C 68
-#define M2_LAYER_C 69
-#define M3_LAYER_C 70
-#define M4_LAYER_C 71
-#define M5_LAYER_C 72
-
-#define LI_PIN_DTYPE 16
-#define LI_TEXT_DTYPE 5
-#define LI_DRAW_DTYPE 20
-#define CONTACT_DTYPE 44
 
 #define BOUND_MARGIN 86 //licon half width + 1
 
@@ -139,11 +138,7 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
                 perror("STRNAME is too long\n");
                 return 1;
               }
-              //good to start a new structure;
-              slist->num_structs++;
-              slist->structures[slist->num_structs - 1] = malloc(sizeof(sref_t));
-              slist->structures[slist->num_structs - 1]->n_lbls = 0;
-              slist->structures[slist->num_structs - 1]->n_pins = 0;
+
 
               //read the structure name into the structure
               fread(str_buf, sizeof(char), (record_len - 4), in_file);
@@ -156,6 +151,13 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
                 stream_state = GOT_TOP_S;
               } else {
                 //copy the new structure name to the new slist element.
+                //good to start a new structure;
+                slist->num_structs++;
+                slist->structures[slist->num_structs - 1] = malloc(sizeof(sref_t));
+                slist->structures[slist->num_structs - 1]->n_lbls = 0;
+                slist->structures[slist->num_structs - 1]->n_pins = 0;
+                slist->structures[slist->num_structs - 1]->next_uid = 0;
+                slist->structures[slist->num_structs - 1]->n_extra = 0;
                 strcpy(slist->structures[slist->num_structs - 1]->strname, str_buf);
               }
             } else {
@@ -169,7 +171,15 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
           case(ENDEL):
             if (record_type == ENDSTR) { last_record = ENDSTR;
               //associate all pin shapes with a pin label.
+              printf("%s n lbls %d\n", slist->structures[slist->num_structs - 1]->strname, slist->structures[slist->num_structs - 1]->n_lbls);
+              for (int i = 0; i < slist->structures[slist->num_structs - 1]->n_lbls; i++) {
+                printf("%s ", slist->structures[slist->num_structs - 1]->pin_lbls[i]->pinname);
+              }
+              printf("\n");
+              //store LI_DRAW shapes connected to a pin label with the label
               assign_pins(slist->structures[slist->num_structs - 1], polylist);
+              //look for floating contacts already in the pcell for whatever reason. (dftrp, xor2)
+              store_extra_contacts(slist->structures[slist->num_structs - 1], polylist);
               //exit structure;
               stream_state = STREAM_S;
               polylist->num_polys = 0;
@@ -238,15 +248,32 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
 
           case(DATATYPE):
             if (record_type == XY) {last_record = XY;
-              if (layernum != LI_LAYER_C) break; //only interested in this layer
-              switch(dtype) {
-                case(LI_PIN_DTYPE): //pin objects DEPRECATED
-                case(CONTACT_DTYPE): //contact/vias
+              //shape needed only for li draw and metal 1.
+              if((layernum == LI_LAYER_C || layernum == M1_LAYER_C) && dtype == DRAW_DTYPE) {
+
+                //process the boundary, which is a li layer, there are record_len - 4 bytes of coords
+                fread(boundary_coords, sizeof(int32_t), (record_len - 4)/sizeof(int32_t), in_file);
+                for (int c = 0; c < (record_len-4)/sizeof(int32_t)/2; c++) {
+                  //hard copy the coords into the polylist for this structure.
+                  polylist->polys[polylist->num_polys].coords[c].x = ntohl(boundary_coords[2*c]);
+                  polylist->polys[polylist->num_polys].coords[c].y = ntohl(boundary_coords[(2*c)+1]);
+                }
+                polylist->polys[polylist->num_polys].num_points = (record_len-4)/sizeof(int32_t)/2;
+                polylist->polys[polylist->num_polys].layer = layernum; //distinguish between LI and M1
+                polylist->polys[polylist->num_polys].dtype = dtype;
+                //assign winding and bound box.
+                config_poly(&(polylist->polys[polylist->num_polys]), BOUND_MARGIN);
+                polylist->num_polys++;
+              } else { //else put vias /contacts in the pins
+                if (dtype == CONTACT_DTYPE) {
                   //Process the bounary, which is a box object.
                   //add a pin
-                  int this_n_pins = slist->structures[slist->num_structs - 1]->n_pins;
+                  int this_n_pins = slist->structures[slist->num_structs - 1]->n_pins++;
+                  if (this_n_pins >= 128) {
+                    printf("Error: %s has too many pins\n", slist->structures[slist->num_structs - 1]->strname);
+                    return 1;
+                  }
                   slist->structures[slist->num_structs - 1]->pins[this_n_pins] = malloc(sizeof(pin_t));
-
                   //grab all the coordinates, technically only using 6.
                   fread(boundary_coords, sizeof(int32_t), 10, in_file);
                   for (int c = 0; c < 10; c++) {boundary_coords[c] = ntohl(boundary_coords[c]);}
@@ -261,25 +288,9 @@ int build_structures(FILE* in_file, FILE* out_file, structure_list_t* slist, pol
                   slist->structures[slist->num_structs - 1]->pins[this_n_pins]->pin.y2 = y2;
                   slist->structures[slist->num_structs - 1]->pins[this_n_pins]->dtype = dtype;
                   slist->structures[slist->num_structs - 1]->pins[this_n_pins]->layernum = layernum;
-                  break; //case(LI_PIN_DTYPE);
-
-                case(LI_DRAW_DTYPE):
-                  //process the boundary, which is a li layer, there are record_len - 4 bytes of coords
-                  fread(boundary_coords, sizeof(int32_t), (record_len - 4)/sizeof(int32_t), in_file);
-                  for (int c = 0; c < (record_len-4)/sizeof(int32_t)/2; c++) {
-                    //hard copy the coords into the polylist for this structure.
-                    polylist->polys[polylist->num_polys].coords[c].x = ntohl(boundary_coords[2*c]);
-                    polylist->polys[polylist->num_polys].coords[c].y = ntohl(boundary_coords[(2*c)+1]);
-                  }
-                  polylist->polys[polylist->num_polys].num_points = (record_len-4)/sizeof(int32_t)/2;
-                  //assign winding and bound box.
-                  config_poly(&(polylist->polys[polylist->num_polys]), BOUND_MARGIN);
-                  polylist->num_polys++;
-                  break;//case(LI_DRAW_DTYPE)
-                default:
-              }//switch(dtype)
-            }
-            else {
+                }
+              }
+            } else {
               sprintf(str_buf, "Record error: state = BOUNDARY:DATATYPE, got = %d, expected XY\n", (char) record_type);
               perror(str_buf);
               return 1;
@@ -816,6 +827,8 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
   XY_t shift;
 
   sref_t* pcell;
+  //open the extra objs object
+
 
   do {
     //process a new record
@@ -882,23 +895,24 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
               //check if the name matches
               fread(strbuf, sizeof(char), record_len - 4, in_file);
               strbuf[record_len - 4] = '\0';
+
+              //Search for the structure
+              int found;
+              for (int cell =0; cell < slist->num_structs; cell++) {
+                if (strcmp(slist->structures[cell]->strname, strbuf) == 0) {
+                  pcell = slist->structures[cell];
+                  pcell->next_uid++;
+                  found = 1;
+                  break;
+                }
+              }
+              if (found == 0) {
+                fprintf(stderr, "Did not find referenced structure \"%s\".\n", strbuf);
+                return 1;
+              }
               //all pcells start with sky130
-              if(strncmp(strbuf, "sky130", 6) == 0) {
+              if(strncmp(strbuf, "sky130", 6) == 0 && found == 1) {
                 last_record = SNAME;
-                //Search for the structure
-                int found;
-                for (int cell =0; cell < slist->num_structs; cell++) {
-                  if (strcmp(slist->structures[cell]->strname, strbuf) == 0) {
-                    pcell = slist->structures[cell];
-                    pcell->next_uid++;
-                    found = 1;
-                    break;
-                  }
-                }
-                if (found == 0) {
-                  fprintf(stderr, "Did not find referenced structure \"%s\".\n", strbuf);
-                  return 1;
-                }
               } else {
                 //if no match, jump back to looking for SREF
                 stream_state = STRUCTURE_S;
@@ -921,7 +935,7 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
               fread(&shift, sizeof(XY_t), 1, in_file);
               shift.x = ntohl(shift.x);
               shift.y = ntohl(shift.y);
-              if(translate_and_copy_shapes(shift, pcell, clist, reflect, rotate) != 0)
+              if(translate_and_copy_shapes(out_file, shift, pcell, clist, reflect, rotate) != 0)
                 return 1;
             } else {
               sprintf(strbuf, "Record error: state = SREF:SNAME, got = %d expect STRANS || XY.\n", (char) record_type);
@@ -957,7 +971,7 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
               fread(&shift, sizeof(XY_t), 1, in_file);
               shift.x = ntohl(shift.x);
               shift.y = ntohl(shift.y);
-              if(translate_and_copy_shapes(shift, pcell, clist, reflect, rotate) != 0)
+              if(translate_and_copy_shapes(out_file, shift, pcell, clist, reflect, rotate) != 0)
                 return 1;
             } else {
               sprintf(strbuf, "Record error: state = SREF:STRANS, got = %d expect MAG || ANGLE || XY.\n", (char) record_type);
@@ -988,7 +1002,7 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
               fread(&shift, sizeof(XY_t), 1, in_file);
               shift.x = ntohl(shift.x);
               shift.y = ntohl(shift.y);
-              if(translate_and_copy_shapes(shift, pcell, clist, reflect, rotate) != 0)
+              if(translate_and_copy_shapes(out_file, shift, pcell, clist, reflect, rotate) != 0)
                 return 1;
             }
             else{
@@ -1003,7 +1017,7 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
               fread(&shift, sizeof(XY_t), 1, in_file);
               shift.x = ntohl(shift.x);
               shift.y = ntohl(shift.y);
-              if(translate_and_copy_shapes(shift, pcell, clist, reflect, rotate) != 0)
+              if(translate_and_copy_shapes(out_file, shift, pcell, clist, reflect, rotate) != 0)
                 return 1;
             }
             break;//case(ANGLE)
@@ -1032,6 +1046,7 @@ int label_contacts(FILE* in_file, FILE* out_file, contact_list_t* clist, structu
   //Check if the referenced struture has both pin labels and LI shapes
   fseek(in_file, start_cursor, SEEK_SET);
   free(strbuf);
+
   return 0;
 }
 
@@ -1316,7 +1331,7 @@ do {
               fread(strbuf, sizeof(char), record_len - 4, in_file);
               strbuf[record_len - 4] = '\0';
               //avoid pcells and contact vias which have already been handled.
-              if(strncmp(strbuf, "sky130", 6) != 0 && strncmp(strbuf, "VIA_L1M1_PR_MR", 14) != 0) {
+              if(strncmp(strbuf, "sky130", 6) != 0 && strncmp(strbuf, "VIA_L1M1_PR_MR", 14) != 0){
                 last_record = SNAME;
                 //Search for the structure
                 int found;

@@ -48,6 +48,8 @@ typedef struct {
   box_t bound;      //bounding box for the polygon
   int l_rb;         //is the interior of the poly on the left or right
   int num_points;   //number of populated coords
+  int layer;
+  int dtype;
 } poly_t;
 
 typedef struct {
@@ -58,8 +60,10 @@ typedef struct {
 
 typedef struct {
   poly_t LI_poly;   //the polygon by which contacts may attach to the pin
-  XY_t xy;          //x and y coordinates of the first instance of this label
   char pinname[64]; //unique pin name in the pcell
+  XY_t xy;          //x and y coordinates of the first instance of this label
+  XY_t contacts[8]; //Contacts to the pin that are already in the pcell, to be copied into contact list.
+  int  n_contacts;
 } pin_lbl_t;
 
 // Structure, used to hold important parts pcells
@@ -67,10 +71,12 @@ typedef struct {
 // Contains a list of labelled pins.
 typedef struct {
   char       strname[64];    //structure name
-  pin_t*     pins[64];       //room for 64 pin objects.
+  pin_t*     pins[128];      //room for 64 pin objects.
   pin_lbl_t* pin_lbls[64];   //list of unique pin labels in the structure.
+  poly_t*    extra[16];      //shapes in the pcell that need to go in the shape list.
   int        n_pins;         //how many of the pins array are allocated
   int        n_lbls;         //how many unique labels are allocated.
+  int        n_extra;        //how many extra shapes
   int        next_uid;       //integer uid to attach to next pcell instance.
 } sref_t;
 
@@ -221,6 +227,10 @@ int write_path(FILE* in_file, FILE* out_file, int len, uint16_t lnum, uint16_t d
 //p : list of LI shapes in the structure
 int assign_pins(sref_t* s, polylist_t* pl);
 
+//look for LI contacts in the list of pin objects that touch any of the LI shapes associated with pins.
+//then find any metal shapes attached to those contacts and store them as extra shapes
+int store_extra_contacts(sref_t* s, polylist_t* polys);
+
 int inside_poly(XY_t xy, poly_t* p);
 
 //takes record data in an sref, applies the transformation to the elements of
@@ -232,7 +242,11 @@ int translate_and_write_shapes(FILE* out_file, XY_t shift, sref_t * sref, int re
 
 //takes record data in an sref, applies the transformation to the elements of
 //the referenced structure and prints shape objects
-int translate_and_copy_shapes(XY_t shift, sref_t * sref, contact_list_t* clist, int reflect, int rotate);
+int translate_and_copy_shapes(FILE* out_file, XY_t shift, sref_t * sref, contact_list_t* clist, int reflect, int rotate);
+
+void transform_shape(poly_t* p, XY_t shift, int reflect, int rotate);
+
+XY_t transform_point(XY_t p, XY_t shift, int reflect, int rotate);
 
 XY_t rot90(XY_t xy);
 
