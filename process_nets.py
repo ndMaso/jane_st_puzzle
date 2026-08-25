@@ -29,9 +29,9 @@ def get_winding(shape):
   for p in range(1,len(shape)):
     this = shape[p]
     x1min = x1min if (x1min < this[0]) else this[0]
-    x1min = x2max if (x2max > this[0]) else this[0]
+    x2max = x2max if (x2max > this[0]) else this[0]
     y1min = y1min if (y1min < this[1]) else this[1]
-    y1min = y2max if (y2max > this[1]) else this[1]
+    y2max = y2max if (y2max > this[1]) else this[1]
 
     if (cur[0] == this[0]):
       if (this[0] == x1min):
@@ -57,8 +57,8 @@ def point_inside_shape(shape, xy) :
   for edge in range(1,len(shape)):
     aft = shape[edge]
     if (horizontal == 1):
-      if(xy[0] >= min(cur[0], aft[0]) and xy[0] <= max(cur[0], aft[0])):
-        if(xy[1] == aft[0]):
+      if ((xy[0] >= min(cur[0], aft[0])) and (xy[0] <= max(cur[0], aft[0]))):
+        if(xy[1] == aft[1]):
           return True
         if (aft[0] < cur[0]) == (xy[1] < aft[1]):
           if(xy[1] > aft[1]):
@@ -73,10 +73,10 @@ def point_inside_shape(shape, xy) :
       horizontal = 0
     else: #horizontal == 0
       #print(f"hi {xy}")
-      if(xy[1] >= min(cur[1], aft[1]) and (xy[1] <= max(cur[1], aft[1]))):
+      if ((xy[1] >= min(cur[1], aft[1])) and ((xy[1] <= max(cur[1], aft[1])))):
         if(xy[0] == aft[0]):
            return True
-        if (aft[1] > cur[1]) == (xy[1] < aft[1]):
+        if (aft[1] > cur[1]) == (xy[0] < aft[0]):
           if (xy[0] > aft[0]):
             lspan[0] = min(lspan[0], xy[0] - aft[0])
           else:
@@ -88,15 +88,14 @@ def point_inside_shape(shape, xy) :
             rspan[1] = min(rspan[1], aft[0] - xy[0])
       horizontal = 1
     cur = aft
+  if (winding == 1):
+    if((lspan[0] < rspan[0]) and (lspan[1] < rspan[1]) and (lspan[2] < rspan[2]) and (lspan[3] < rspan[3])):
+      return True
+  else:
+    if((rspan[0] < lspan[0]) and (rspan[1] < lspan[1]) and (rspan[2] < lspan[2]) and (rspan[3] < lspan[3])):
+      return True
 
-    if (winding == 1):
-      if((lspan[0] < rspan[0]) and (lspan[1] < rspan[1]) and (lspan[2] < rspan[2]) and (lspan[3] < rspan[3])):
-        return True
-    else:
-      if((rspan[0] < lspan[0]) and (rspan[1] < lspan[1]) and (rspan[2] < lspan[2]) and (rspan[3] < lspan[3])):
-        return True
-
-    return False
+  return False
 
 def shape_touch_rect(shape, rect):
   #shape may intersect with rect if one entirely covers the other, or if any of the
@@ -111,7 +110,7 @@ def shape_touch_rect(shape, rect):
       return True
 
     #check all horizontal edges of the shape intersect the vertical edges of the rect
-    if(shape[0][0] == shape[1][0]): #first edge is horizontal
+    if(shape[0][1] == shape[1][1]): #first edge is horizontal
       horiz = 1
     else:
       horiz = 0
@@ -182,12 +181,13 @@ class Pin(NetSeg):
     return any([net.rect['x'][0] <= n[0] and n[0] <= net.rect['x'][1] and
             net.rect['y'][0] <= n[1] and n[1] <= net.rect['y'][1] and
             (abs(self.layer - net.layer) - ((self.layer + 1) %2)) <= 1 for n in self.xy])
+
   def _touch_pin(self, net):
     #pin can't touch pin
     return False
 
   def _touch_shape(self,net):
-    return point_inside_shape(net.shape, self.xy[0])
+    return point_inside_shape(net.shape, self.xy[0]) and (((abs(self.layer - net.layer) - ((self.layer +1) %2))) <= 1)
 
   def add_pin(self, xy):
     self.xy.append(xy)
@@ -208,7 +208,7 @@ class Rect(NetSeg):
             (abs(self.layer - net.layer) - ((self.layer +1) %2)) <= 1 for n in net.xy])
 
   def _touch_shape(self,net):
-    return shape_touch_rect(net.shape, self.rect)
+    return shape_touch_rect(net.shape, self.rect) and ((abs(self.layer - net.layer) - ((self.layer +1) %2)) <= 1)
 
 class Shape(NetSeg):
   def __init__(self, shape, layer = Layer.M1_ROUTE):
@@ -221,10 +221,10 @@ class Shape(NetSeg):
     self.shape = shape
 
   def _touch_rect(self, net):
-    return shape_touch_rect(self.shape, net.rect)
+    return shape_touch_rect(self.shape, net.rect) and ((abs(self.layer - net.layer) - ((self.layer +1) %2)) <= 1)
 
   def _touch_pin(self, net):
-    return point_inside_shape(self.shape, net.xy[0])
+    return point_inside_shape(self.shape, net.xy[0]) and ((abs(self.layer - net.layer) - ((self.layer +1) %2)) <= 1)
 
   def _touch_shape(self,net):
     return False #this does not occur, shapes are associated with distinct pins and hence must not collide
@@ -316,11 +316,9 @@ def compare(item1, item2):
 in_file = open("./data/out.txt")
 objects = json.load(in_file)
 
-
 nets = []
 #load pins and outputs, add them after whole routing structure is known
 deferred_objs = []
-
 
 outputs = [f'O[{i}]' for i in range(8)]
 outputs.append('success')
@@ -429,7 +427,7 @@ for pass_through in range(100): # allow 20 sweeps through the object list
     for n in nets:
       #check if touches boundin box
       if(not n.in_bound(obj)): continue
-      for seg in n.segments[::-1]: #traverse from most recent backwards to the fifth most recent
+      for seg in n.segments[::-1]: #traverse from most recent backwards
         if(seg.touches(obj)):
           n.add_to_net(obj)
           to_pop.append(ind)
