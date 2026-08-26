@@ -56,7 +56,7 @@ def clkbuf_4(inst):
   return f"clkbuf_4_{inst}_X <= clkbuf_4{inst}_A;"
 
 def inv_2(inst):
-  return f"inv_2_{inst}_Y <= inv_2{inst}_A;"
+  return f"inv_2_{inst}_Y <= not inv_2{inst}_A;"
 
 def mux2_1(inst):
   return f"mux2_1_{inst}_X <= mux2_1_{inst}_A1 when mux2_1_{inst}_S = '1' else mux2_1_{inst}_A0;"
@@ -71,14 +71,15 @@ def a31o_2(inst):
   return f"a31o_2_{inst}_X <= a31o_2_{inst}_A1 and a31o_2_{inst}_A2 and a31o_2_{inst}_A3 and a31o_2_{inst}_B1;"
 
 def dfrtp_2(inst):
-  return f"""process(dfrtp_2_{inst}_RESET_B, dfrtp_2_{inst}_CLK) begin
+  return f"""
+process(dfrtp_2_{inst}_RESET_B, dfrtp_2_{inst}_CLK) begin
   if dfrtp_2_{inst}_RESET_B = '0' then
     dfrtp_2_{inst}_Q <= '0';
   elsif rising_edge(dfrtp_2_{inst}_CLK) then
     dfrtp_2_{inst}_Q <= dfrtp_{inst}_D;
   end if;
-  end process;
-  """
+end process;
+"""
 
 def or4bb_2(inst):
   return f"or4bb_2_{inst}_X <= or4bb_2_{inst}_A or or4bb_2_{inst}_B or not or4bb_2_{inst}_C_N or not or4bb_2_{inst}_D_N;"
@@ -193,13 +194,15 @@ def o22a_2(inst):
   return f"o22a_2_{inst}_X <= (o22a_2_{inst}_A1 or o22a_2_{inst}_A2) and (o22a_2_{inst}_B1 or o22a_2_{inst}_B2);"
 
 def dfstp_2(inst):
-  return f"""process(dfstp_2_{inst}_SET_B, dfstp_2_{inst}_CLK) begin
+  return f"""
+process(dfstp_2_{inst}_SET_B, dfstp_2_{inst}_CLK) begin
   if dfstp_2_{inst}_SET_B = '0' then
     dfstp_2_{inst}_Q <= '1';
   elsif rising_edge(dfstp_2_{inst}_CLK) then
     dfstp_2_{inst}_Q <= dfstp_2_{inst}_D;
   end if;
-  end process;"""
+end process;
+"""
 
 def a211o_2(inst):
   return f"a211o_2_{inst}_X <= a211o_2_{inst}_B1 or a211o_2_{inst}_C1 or (a211o_2_{inst}_A1 and a211o_2_{inst}_A2);"
@@ -253,11 +256,13 @@ def nand3_2(inst):
   return f"nand3_2_{inst}_Y <= not (nand3_2_{inst}_A and nand3_2_{inst}_B and nand3_2_{inst}_C);"
 
 def dfxtp_2(inst):
-  return f"""process(dfxtp_2_{inst}_CLK) begin
-    if rising_edge(dfxtp_2_{inst}_CLK) then
-      dfxtp_2_{inst}_Q <= dfxtp_2_{inst}_D;
-    end if;
-  end process;"""
+  return f"""
+process(dfxtp_2_{inst}_CLK) begin
+  if rising_edge(dfxtp_2_{inst}_CLK) then
+    dfxtp_2_{inst}_Q <= dfxtp_2_{inst}_D;
+  end if;
+end process;
+"""
 
 def nand3b_2(inst):
   return f"nand3b_2_{inst}_Y <= not (nand3b_2_{inst}_C and nand3b_2_{inst}_B and not nand3b_2_{inst}_A_N);"
@@ -342,7 +347,7 @@ with open("netlist.json") as in_file:
 net_names = objects["obj"].keys()
 
 ios = ['I','clk','rst_n','enable','success', 'VGND', 'VPWR']
-ios.append([f'O[{i}]' for i in range(8)])
+ios.extend([f'O[{i}]' for i in range(8)])
 
 with open("puzzle.vhd", 'w') as fd :
   fd.write(Header)
@@ -350,13 +355,16 @@ with open("puzzle.vhd", 'w') as fd :
   for net in net_names:
     cell_nets = [re.sub(r'^sky130_fd_sc_hd__', '', net).replace('/','_')] if net not in ios else []
     cell_nets.extend([re.sub(r'^sky130_fd_sc_hd__', '', i).replace('/','_') for i in objects["obj"][net] if i not in ios])
-    fd.write("signal " + ", ".join(cell_nets) + ": std_logic;\n")
+    if (cell_nets): fd.write("signal " + ", ".join(cell_nets) + ": std_logic;\n")
   fd.write(Begin)
 
   #drive the driver into its loads
   for net in net_names:
-    fd.write("\n".join([f"{re.sub(r'^sky130_fd_sc_hd__', '', i).replace('/','_')} <= {re.sub(r'^sky130_fd_sc_hd__', '', net).replace('/','_')};" for i in objects["obj"][net]]))
+    if(net in ["VPWR", "VGND"]): continue
+    vhd_net = net.replace('[', '(').replace(']',')')
+    fd.write("\n".join([f"{re.sub(r'^sky130_fd_sc_hd__', '', i).replace('/','_').replace('[', '(').replace(']',')')} <= {re.sub(r'^sky130_fd_sc_hd__', '', vhd_net).replace('/','_')};" for i in objects["obj"][net]]))
     fd.write("\n")
+
   #driver the driver based on its type and inputs
   for net in net_names:
     if net not in ios:
