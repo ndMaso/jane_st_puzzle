@@ -1,5 +1,7 @@
 
-Header = """
+Header = """library ieee;
+use ieee.std_logic_1164.all;
+
 entity puzzle is
   port(
     clk     : in  std_logic;
@@ -14,6 +16,7 @@ entity puzzle is
 end puzzle;
 
 architecture rtl of puzzle is
+  attribute keep : string;
 
 """
 
@@ -30,10 +33,12 @@ import json
 import re
 
 def write_pcell(fd, fullname):
-  cellname = fullname.split("/")[0]
+  [cellname,pin] = fullname.split("/")
   l = re.sub(r'^sky130_fd_sc_hd__', '', cellname).rsplit("_", 1)
-  if len(l) < 2 :print(fullname)
-  string = map_write[l[0]](l[1])
+  if l[0] == "conb_1":
+    string = conb_1(l[1], pin)
+  else:
+    string = map_write[l[0]](l[1])
   if (string):
     fd.write(string + '\n')
 
@@ -47,16 +52,16 @@ def tapvpwrvgnd_1(inst):
   return ""
 
 def clkbuf_16(inst):
-  return f"clkbuf_16_{inst}_X <= clkbuf_16{inst}_A;"
+  return f"clkbuf_16_{inst}_X <= clkbuf_16_{inst}_A;"
 
 def clkbuf_8(inst):
-  return f"clkbuf_8_{inst}_X <= clkbuf_8{inst}_A;"
+  return f"clkbuf_8_{inst}_X <= clkbuf_8_{inst}_A;"
 
 def clkbuf_4(inst):
   return f"clkbuf_4_{inst}_X <= clkbuf_4{inst}_A;"
 
 def inv_2(inst):
-  return f"inv_2_{inst}_Y <= not inv_2{inst}_A;"
+  return f"inv_2_{inst}_Y <= not inv_2_{inst}_A;"
 
 def mux2_1(inst):
   return f"mux2_1_{inst}_X <= mux2_1_{inst}_A1 when mux2_1_{inst}_S = '1' else mux2_1_{inst}_A0;"
@@ -68,7 +73,7 @@ def a221o_2(inst):
   return f"a221o_2_{inst}_X <= (a221o_2_{inst}_A1 and a221o_2_{inst}_A2) or (a221o_2_{inst}_B1 and a221o_2_{inst}_B2) or a221o_2_{inst}_C1;"
 
 def a31o_2(inst):
-  return f"a31o_2_{inst}_X <= a31o_2_{inst}_A1 and a31o_2_{inst}_A2 and a31o_2_{inst}_A3 and a31o_2_{inst}_B1;"
+  return f"a31o_2_{inst}_X <= (a31o_2_{inst}_A1 and a31o_2_{inst}_A2 and a31o_2_{inst}_A3) or a31o_2_{inst}_B1;"
 
 def dfrtp_2(inst):
   return f"""
@@ -76,7 +81,7 @@ process(dfrtp_2_{inst}_RESET_B, dfrtp_2_{inst}_CLK) begin
   if dfrtp_2_{inst}_RESET_B = '0' then
     dfrtp_2_{inst}_Q <= '0';
   elsif rising_edge(dfrtp_2_{inst}_CLK) then
-    dfrtp_2_{inst}_Q <= dfrtp_{inst}_D;
+    dfrtp_2_{inst}_Q <= dfrtp_2_{inst}_D;
   end if;
 end process;
 """
@@ -85,14 +90,15 @@ def or4bb_2(inst):
   return f"or4bb_2_{inst}_X <= or4bb_2_{inst}_A or or4bb_2_{inst}_B or not or4bb_2_{inst}_C_N or not or4bb_2_{inst}_D_N;"
 
 def or4_2(inst):
-  return f"or4bb_2_{inst}_X <= or4bb_2_{inst}_A or or4bb_2_{inst}_B or or4bb_2_{inst}_C or or4bb_2_{inst}_D;"
+  return f"or4_2_{inst}_X <= or4_2_{inst}_A or or4_2_{inst}_B or or4_2_{inst}_C or or4_2_{inst}_D;"
 
-def conb_1(inst):
-  return f"""conb_1_{inst}_LO <= '0';
-  conb_1_{inst}_HI <= '1';"""
+def conb_1(inst, pin):
+  if pin == "LO" : return f"conb_1_{inst}_LO <= '0';"
+  else: return f"conb_1_{inst}_HI <= '1';"
+
 
 def buf_2(inst):
-  return f"buf_2_{inst}_X <= buf_2_{inst}_A"
+  return f"buf_2_{inst}_X <= buf_2_{inst}_A;"
 
 def and4_2(inst):
   return f"and4_2_{inst}_X <= and4_2_{inst}_A and and4_2_{inst}_B and and4_2_{inst}_C and and4_2_{inst}_D;"
@@ -110,10 +116,10 @@ def nand4_2(inst):
   return f"nand4_2_{inst}_Y <= not (nand4_2_{inst}_A and nand4_2_{inst}_B and nand4_2_{inst}_C and nand4_2_{inst}_D);"
 
 def o21a_2(inst):
-  return f"o21a_2{inst}_X <= o21a_2{inst}_B1 and (o21a_2{inst}_A1 and o21a_2{inst}_A2);"
+  return f"o21a_2_{inst}_X <= o21a_2_{inst}_B1 and (o21a_2_{inst}_A1 or o21a_2_{inst}_A2);"
 
 def nand2b_2(inst):
-  return f"nand2b_2{inst}_Y <= nand2b_2{inst}_A_N or not nand2b_2{inst}_B;"
+  return f"nand2b_2_{inst}_Y <= nand2b_2_{inst}_A_N or not nand2b_2_{inst}_B;"
 
 def and2_2(inst):
   return f"and2_2_{inst}_X <= and2_2_{inst}_A and and2_2_{inst}_B;"
@@ -131,7 +137,7 @@ def a21o_2(inst):
   return f"a21o_2_{inst}_X <= a21o_2_{inst}_B1 or (a21o_2_{inst}_A1 and a21o_2_{inst}_A2);"
 
 def and4bb_2(inst):
-  return f"and4bb_2_{inst}_X <= and4bb_2_{inst}_D and and4bb_2_{inst}_C and not (and4bb_2_{inst}_A or and4bb_2_{inst}_B);"
+  return f"and4bb_2_{inst}_X <= and4bb_2_{inst}_D and and4bb_2_{inst}_C and not (and4bb_2_{inst}_A_N or and4bb_2_{inst}_B_N);"
 
 def and4b_2(inst):
   return f"and4b_2_{inst}_X <= and4b_2_{inst}_D and and4b_2_{inst}_C and and4b_2_{inst}_B and not and4b_2_{inst}_A_N;"
@@ -167,7 +173,7 @@ def o31a_2(inst):
   return f"o31a_2_{inst}_X <= o31a_2_{inst}_B1 and (o31a_2_{inst}_A1 or o31a_2_{inst}_A2 or o31a_2_{inst}_A3);"
 
 def o211a_2(inst):
-  return f"o211a_2_{inst}_X <= o211a_2_{inst}_C1 and o211a_2_{inst}_B1 and (o211a_2_{inst}_A1 or o211a_2_{inst}_A2)'"
+  return f"o211a_2_{inst}_X <= o211a_2_{inst}_C1 and o211a_2_{inst}_B1 and (o211a_2_{inst}_A1 or o211a_2_{inst}_A2);"
 
 def a2111oi_2(inst):
   return f"a2111oi_2_{inst}_Y <= not ((a2111oi_2_{inst}_A1 and a2111oi_2_{inst}_A2) or (a2111oi_2_{inst}_B1 or a2111oi_2_{inst}_C1 or a2111oi_2_{inst}_D1));"
@@ -356,6 +362,9 @@ with open("puzzle.vhd", 'w') as fd :
     cell_nets = [re.sub(r'^sky130_fd_sc_hd__', '', net).replace('/','_')] if net not in ios else []
     cell_nets.extend([re.sub(r'^sky130_fd_sc_hd__', '', i).replace('/','_') for i in objects["obj"][net] if i not in ios])
     if (cell_nets): fd.write("signal " + ", ".join(cell_nets) + ": std_logic;\n")
+  for net in net_names:
+    if net.startswith('sky130_fd_sc_hd__df'):
+      fd.write(f'attribute keep of {re.sub(r"^sky130_fd_sc_hd__", "", net).replace("/","_")}: signal is "true";\n')
   fd.write(Begin)
 
   #drive the driver into its loads
