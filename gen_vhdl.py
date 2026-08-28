@@ -161,7 +161,7 @@ def a221oi_2(inst):
   return f"a221oi_2_{inst}_Y <= not ((a221oi_2_{inst}_A1 and a221oi_2_{inst}_A2) or (a221oi_2_{inst}_C1 or (a221oi_2_{inst}_B1 and a221oi_2_{inst}_B2)));"
 
 def nor3b_2(inst):
-  return f"nor3b_2_{inst}_Y <= nor3b_2_{inst}_C_N and not (nor3b_2_{inst}_A and nor3b_2_{inst}_B);"
+  return f"nor3b_2_{inst}_Y <= nor3b_2_{inst}_C_N and not (nor3b_2_{inst}_A or nor3b_2_{inst}_B);"
 
 def nor3_2(inst):
   return f"nor3_2_{inst}_Y <= not (nor3_2_{inst}_A or nor3_2_{inst}_B or nor3_2_{inst}_C);"
@@ -360,18 +360,20 @@ with open("puzzle.vhd", 'w') as fd :
   #write every driver that's not an io or VPWR, VGND
   for net in net_names:
     cell_nets = [re.sub(r'^sky130_fd_sc_hd__', '', net).replace('/','_')] if net not in ios else []
-    cell_nets.extend([re.sub(r'^sky130_fd_sc_hd__', '', i).replace('/','_') for i in objects["obj"][net] if i not in ios])
+    cell_nets.extend([re.sub(r'^sky130_fd_sc_hd__', '', i).replace('/','_') for i in objects["obj"][net] if (i not in ios and "CLK" not in i)])
     if (cell_nets): fd.write("signal " + ", ".join(cell_nets) + ": std_logic;\n")
   for net in net_names:
     if net.startswith('sky130_fd_sc_hd__df'):
-      fd.write(f'attribute keep of {re.sub(r"^sky130_fd_sc_hd__", "", net).replace("/","_")}: signal is "true";\n')
+      #fd.write(f'attribute keep of {re.sub(r"^sky130_fd_sc_hd__", "", net).replace("/","_")}: signal is "true";\n')
+      base = re.sub(r"^sky130_fd_sc_hd__", "", net).rsplit('/', 1)[0]
+      fd.write(f'alias {base + "_CLK"}: std_logic is clk;\n')
   fd.write(Begin)
 
   #drive the driver into its loads
   for net in net_names:
     if(net in ["VPWR", "VGND"]): continue
     vhd_net = net.replace('[', '(').replace(']',')')
-    fd.write("\n".join([f"{re.sub(r'^sky130_fd_sc_hd__', '', i).replace('/','_').replace('[', '(').replace(']',')')} <= {re.sub(r'^sky130_fd_sc_hd__', '', vhd_net).replace('/','_')};" for i in objects["obj"][net]]))
+    fd.write("\n".join([f"{re.sub(r'^sky130_fd_sc_hd__', '', i).replace('/','_').replace('[', '(').replace(']',')')} <= {re.sub(r'^sky130_fd_sc_hd__', '', vhd_net).replace('/','_')};" for i in objects["obj"][net] if "CLK" not in i]))
     fd.write("\n")
 
   #driver the driver based on its type and inputs
