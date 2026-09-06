@@ -12,20 +12,32 @@ I would say that from the start I could see about 80% of the final workload, wit
 I started out by just looking around the layout in the [TinyTapeout viewer](https://gds-viewer.tinytapeout.com/). At this point I was under the grim impression that I'd be analysing the circuit at the transistor level, and so I was refamiliarising myself with CMOS layouts. Following the clock input along the routing tracks, it ends up at a buffer in the center of the chip.
 
 ![clkbuf]()
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/clockbuf.png width=500>
+</p>
 
 In this image we can see some of the distinguishing layers of this semiconductor process. The red layer in the middle is typical polysilicon, used for the gate material of the mosfets. These sit above the active/high doped/diff silicon in the actual wafer, making up source and drain material. On top is a metal layer that isn't called a metal layer, the "local interconnect," which does the last mile routing from the metal layers above to the polysilicon contacts below. The local interconnect turns out to be the most important and fiddly part of the netlist extraction.
 
 The clock buffer is pretty simple, its a medium sized inverted driving a big inverter. But assuming I would be doing lots of transistor level analysis, I moved onto the flip flop, and it only took about an hour and a half of looking at this...
 
 ![dff_layout]()
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/dff.png width=500>
+</p>
 
 to come up with this... which was a good exercise but not a feasible way to approach the whole circuit.
 
 ![dff_schem]()
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/dff_schem.png width=500>
+</p>
 
 With some more clicking, I noticed that nearby objects are grouped and highlight on click, with an annotation appearing to reference a Skywater 130nm pcell. I was aware that digital design is not generally attempted at the transistor level, instead a library of pcells is used, containing cut and paste layouts for every gate you could ask for, which are placed in rows by one algorithm and their inputs routed together by another algorithm. These annotations indicate that some trace of this methodology is still present in the raw shapes at the bottom-most level of abstraction, the gds file.
 
 ![pcell_spotted]()
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/pcell.png width=500>
+</p>
 
 Hexdumping the file and searching for "sky" confirmed this suspicion
 ```
@@ -41,6 +53,11 @@ Looking up the gds2 format, you can see that as a compression method, it include
 It turns out to be even better than that. Looking at the layout in KLayout this time we can see quite a bit more information.
 
 ![kl top]()
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/kl_top.png width=300>
+</p>
+
+
 
 This includes some more layer, but also much more text. Looking at one of the structures, there seems to be two very important layers. 67/20 contains the local interconnect shapes and turns out to include every one of them, i.e. there is not routing on the LI layer that is defined in the top structure, it's all done in the pcells. Additionally there's a layer of text on 67/5 which provide the pin labels of the gate, which, critically, intersect with the LI shape of that pin. An additional layer (small squares) is a non-physical "pin" layer 67/15. 
 
@@ -57,6 +74,9 @@ These layers provide the opportunity to skip the transistors altogether, as we h
 The weakest of these assumptions are the pin related ones, especially regarding routing as they have little to do with via placement. The assumptions regarding LI shapes are almost always true. Expect for one or two cases, each blob of LI is made of only 1 LI shape and since the exceptions are defined in structures it was easy to edit the file in KLayout to validate this assumption. The are two cells that have disjoint blobs of LI used for the same pin, with vias to metal 1 and a metal 1 routing shape to join them, these being the dfrtp_2 and xor2_2. This is annoying as now the top level structure can connect to this pin using an M2M1 via to the metal object.
 
 ![pcell li and text]()
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/pcell%20li%20and%20text.png width=500>
+</p>
 
 # Extracting useful objects from the .gds 
 I decided to do the gds parsing in C, for speed and because I have the most familiarity with file operations in C.
@@ -91,8 +111,15 @@ Now define left span and right span. These contain the smallest distance from th
 In the case of a left interior shape, the point is inside if all four elements of the left span is strictly smaller than the right span.
 Examples of the lspan and rspan are depicted below
 ![lspan]()
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/lspan.png width=500>
+</p>
 
 ![rspan]()
+
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/rspan.png width=500>
+</p>
 
 ---
 
@@ -221,6 +248,7 @@ The nets themselves are a separate class, including a name, a list of segments a
 
 ## Growing the nets
 The sorted list is traversed first forward, then backward and so on until all net segments are assigned. Each unallocated net segment is checked for intersection with the bounding box of every unfinished net and if it is in bounds, it is then checked for intersection with any of the segments already in the net. A net is finished if it hasn't gotten any bigger in the most recent sweep through the net segments.
+
 ```json
 {"obj": {"sky130_fd_sc_hd__inv_2_2/Y": ["sky130_fd_sc_hd__a32o_2_2/A1"], "sky130_fd_sc_hd__inv_2_4/Y": ["sky130_fd_sc_hd__a21boi_2_2/A1"],...
 ```
@@ -292,12 +320,21 @@ alias dfrtp_2_46_CLK: std_logic is clk;
 I wrote a basic test bench around the puzzle module, strobing reset then setting enable and for the moment just holding 'I' low. Surprisingly, this doesn't work, but there is a little activity in the 'O' signal after a while.
 
 ![Output]()
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/I%20held%20low.png width=800>
+</p>
 
 Zooming in we see a burst of a few very conspicuous numbers. Switching the radix of the 'O' signal to ascii shows a cute message, an empty sky with no stars.
 
 ![Output data]()
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/ExampleOutput.png width=800>
+</p>
 
 ![Empty sky]()
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/empty%20sky.png width=800>
+</p>
 
 # Exploring synthesis results
 
@@ -305,6 +342,18 @@ I had been hoping to use the schematic visualiser in Vivado to assist in reverse
 
 The next stage is a "baba is you" level brain bender, demanding a lot from your working memory, pattern recognition and intuition. Thankfully there's a lot of a) reuse of a few flip flops and b) repetitive structures with minor tweaks. From a cursory look around there's a few standout structures.
 1. a delay chain driven by the input
+2. a 4 bit counter that increments when enable is high and rolls over when the counter would equal 11 otherwise, creating a mod 11 counter.
+3. a second 4 bit counter that increments when the first 4 bit counter rolls over.
+4. an 8 bit counter that increments when I is high.
+5. a whole bunch of two bit counters that latch when they equal 3. The condition for incrementing is if I is high during certain combinations of the two four bit counters, i.e. on certain cycle numbers since reset.
+
+The success signal is driven by a flip flop which latches if ever set. So the goal becomes finding what condition sets that flip flop. The condition is that all of the 2 bit counters = 2, hence if any equal 3 then the trial fails since they latch there. Also a second flip flop that latches if set high must be low for success to be set. That flip flop is set based on a few states of the delay line, for example if I is high and I delayed 11 times is also high. Hence I must not be set 11 cycles after if was set previously. The other conditions are that I must not be set 1, 10 or 12 cycles after I was previously set, unless the current value of the fast 4 bit counter is 0.
+
+## Finding when the 2 bit counters increment
+As mentioned before there are 33 2 bit counters which increment if I is set during some subset of the cycles from 0 to 120. Finding which cycles are in each subset was a little tricky for some of them. 22 of them were easy, as they were just simple functions of the lower 4 bit counter.
+...
+
+#
 
 # Solving for x
 To summarize the requirements of getting success high.
@@ -355,6 +404,13 @@ for loopcnt in 0 to 120 loop
 end loop;
 ...
 ```
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/Correct%20seq.png width=800>
+</p>
+
+<p align="center">
+  <img src=https://github.com/ndMaso/jane_st_puzzle/blob/master/data/rsrc/two_stars.png width=800>
+</p>
 
 
 
