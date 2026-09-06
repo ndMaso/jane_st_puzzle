@@ -30,6 +30,7 @@ int main(int argc, char* argv[]) {
 // Parsing
   if (argc != 4) {
     perror("gds2nets: usage - <infile> <outfile> <top_level_strname>\n");
+    return 1;
   }
   //Initialize
 
@@ -82,10 +83,6 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "Did not find the via structure.\n");
   }
 
-  for (int i = 0; i < slist->num_structs; i++) {
-    if (slist->structures[i]->n_pins > 0) printf("%s, l %d ,d %d\n", slist->structures[i]->strname, slist->structures[i]->pins[0]->layernum, slist->structures[i]->pins[0]->dtype);
-    else printf("%s NOTHING\n", slist->structures[i]->strname);
-  }
 
   if(error == 0) {
     clist->contacts = malloc(sizeof(contact_t) * 8192);

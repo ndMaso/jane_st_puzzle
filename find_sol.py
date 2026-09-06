@@ -8,10 +8,9 @@ for i in range(121 - 11):
   disallowed_pairs.append([i, i+11])
 
 for i in range(121):
-  if (i-10) >= 0:
-    if (i % 11) != 0:
-      disallowed_pairs.append([i-10,i])
   if (i % 11) == 0: continue #no forbidding here
+  if (i-10) >= 0:
+    disallowed_pairs.append([i-10,i])
   if (i-1)>=0:
     disallowed_pairs.append([i-1, i])
   if (i-12)>=0:

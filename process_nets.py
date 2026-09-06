@@ -449,3 +449,6 @@ for n in nets:
   #this way if you see a top y coord that is lower than the bounding box of the whole design ... idk
 #maintain a bounding box for the net segment to simplify intersection, check if the new segment intersects with bounding box first, then check each net.
 #only add to driven nets, don't make new net segments.
+
+with open("./netlist2.json", "w") as out_file:
+  json.dump({"obj": {i.name : [j.name for j in i.segments if type(j) == Pin and j.name != i.name] for i in complete_nets}}, out_file)
